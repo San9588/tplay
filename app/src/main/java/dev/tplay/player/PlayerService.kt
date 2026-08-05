@@ -115,9 +115,12 @@ class PlayerService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setPauseAtEndOfMediaItems(false)
             .build()
+        // Audio offload is disabled so that android.media.audiofx.Visualizer can attach
+        // to the audio session and inspect FFT frequencies for VBASS (haptic bass).
+        // (Hardware DSP offload bypasses the software audio mixer and breaks Visualizer.)
         val offloadPrefs = TrackSelectionParameters.AudioOffloadPreferences.Builder()
             .setAudioOffloadMode(
-                TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED,
+                TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED,
             )
             .setIsGaplessSupportRequired(true)
             .build()

@@ -61,9 +61,7 @@ is signed with the debug key so it can be installed directly.
 ## optimizations
 
 ### playback / battery
-- **audio offload** enabled (`TrackSelectionParameters.AudioOffloadPreferences`,
-  `AUDIO_OFFLOAD_MODE_ENABLED`) so supported tracks decode on the DSP instead of
-  the CPU
+- **audio offload** disabled (`AUDIO_OFFLOAD_MODE_DISABLED`) so that `android.media.audiofx.Visualizer` can attach to the audio session for VBASS (haptic bass) FFT frequency inspection
 - tuned `DefaultLoadControl` (50 s min / 100 s max buffer, fast rebuffer resume)
 - `WAKE_MODE_LOCAL` — wakelock only while actively playing
 - `handleAudioBecomingNoisy` + audio-focus handling (pause on unplug/duck)
