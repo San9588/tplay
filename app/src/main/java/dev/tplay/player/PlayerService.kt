@@ -7,6 +7,7 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -95,10 +96,13 @@ class PlayerService : MediaSessionService() {
                     "Referer" to "https://www.youtube.com/",
                 ),
             )
+        // Wrap httpFactory in DefaultDataSource.Factory so that local content:// and file://
+        // audio files work alongside online HTTP/HTTPS YouTube streams.
+        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
         val player = ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(context).setDataSourceFactory(httpFactory),
+                DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory),
             )
             .setAudioAttributes(
                 AudioAttributes.Builder()
