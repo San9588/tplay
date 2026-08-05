@@ -22,3 +22,9 @@
 
 # Kotlinx coroutines
 -dontwarn kotlinx.coroutines.**
+
+# Compose runtime — R8 optimizations otherwise break snapshot lock verification
+# ("failed lock verification and will run slower" warnings on startup)
+-keep class androidx.compose.runtime.snapshots.** { *; }
+-keep class androidx.compose.runtime.** { *; }
+-dontwarn androidx.compose.**

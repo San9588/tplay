@@ -2,12 +2,15 @@ package dev.tplay.player
 
 import android.content.ComponentName
 import android.content.Context
+import android.util.Log
 import androidx.media3.common.C
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import dev.tplay.data.model.Song
 import dev.tplay.data.model.SongSource
+import dev.tplay.data.prefs.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -17,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -37,6 +41,7 @@ data class PlayerUiState(
     val speed: Float = 1f,
     val sleepRemainingMs: Long = 0L,
     val isLoading: Boolean = false,
+    val errorMessage: String? = null,
 ) {
     val progress: Float
         get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
@@ -45,6 +50,10 @@ data class PlayerUiState(
 class PlayerConnection(private val context: Context) {
 
     companion object {
+        private const val TAG = "tplay-player"
+        private const val MAX_CONSECUTIVE_SKIPS = 3
+        private const val ERROR_STREAK_WINDOW_MS = 30_000L
+
         @Volatile
         private var INSTANCE: PlayerConnection? = null
 
@@ -67,6 +76,11 @@ class PlayerConnection(private val context: Context) {
     private var sleepJob: Job? = null
     private var tickerJob: Job? = null
 
+    // Consecutive-error guard: auto-skip at most a few broken items in a row, then
+    // stop and surface the error instead of looping through the whole queue.
+    private var errorStreak = 0
+    private var firstErrorAtMs = 0L
+
     @Volatile
     private var hapticBassEnabled = false
 
@@ -85,6 +99,28 @@ class PlayerConnection(private val context: Context) {
         override fun onEvents(player: Player, events: Player.Events) {
             sync(player)
         }
+
+        override fun onPlayerError(error: PlaybackException) {
+            Log.e(TAG, "player error: ${error.errorCodeName} ${error.message}", error)
+            val c = controller ?: return
+            _state.update { it.copy(errorMessage = error.errorCodeName) }
+            // Broken items (expired/403 streams, etc.) are skipped automatically, but a
+            // few consecutive failures stop the skipping so we don't burn through the
+            // whole queue — the error stays visible in the UI instead.
+            val now = System.currentTimeMillis()
+            if (now - firstErrorAtMs > ERROR_STREAK_WINDOW_MS) {
+                errorStreak = 0
+                firstErrorAtMs = now
+            }
+            errorStreak++
+            if (errorStreak <= MAX_CONSECUTIVE_SKIPS &&
+                c.mediaItemCount > 1 && c.currentMediaItemIndex < c.mediaItemCount - 1
+            ) {
+                c.seekToNextMediaItem()
+                c.prepare()
+                c.play()
+            }
+        }
     }
 
     private fun connect() {
@@ -95,7 +131,7 @@ class PlayerConnection(private val context: Context) {
             )
             var attempts = 0
             var c: MediaController? = null
-            while (attempts < 3 && scope.isActive) {
+            while (scope.isActive) {
                 attempts++
                 c = runCatching {
                     MediaController.Builder(context, token)
@@ -103,15 +139,36 @@ class PlayerConnection(private val context: Context) {
                         .get(4, TimeUnit.SECONDS)
                 }.getOrNull()
                 if (c != null) break
-                delay(1500)
+                // The session service may not be up yet (e.g. first launch): retry with
+                // a short delay, then fall back to a slow backoff loop so the app still
+                // connects if the service is started later.
+                if (attempts >= 3) {
+                    attempts = 0
+                    delay(30_000)
+                } else {
+                    delay(1_500)
+                }
             }
+            if (!scope.isActive) return@launch
             val controller = c ?: return@launch
             withContext(Dispatchers.Main) {
                 this@PlayerConnection.controller = controller
                 controller.addListener(listener)
                 runCatching { sync(controller) }
+                applyPersistedSettings(controller)
                 startTicker(controller)
             }
+        }
+    }
+
+    // Re-apply saved playback prefs (speed / repeat / shuffle) after a fresh connect so
+    // settings survive app restarts.
+    private suspend fun applyPersistedSettings(c: MediaController) {
+        runCatching {
+            val settings = SettingsStore(context).settings.first()
+            c.repeatMode = settings.repeat
+            c.shuffleModeEnabled = settings.shuffle
+            if (settings.playbackSpeed != 1f) c.setPlaybackSpeed(settings.playbackSpeed)
         }
     }
 
@@ -159,6 +216,8 @@ class PlayerConnection(private val context: Context) {
             val current = player.currentMediaItem?.let { item ->
                 queueById[item.mediaId] ?: Song.fromMediaItem(item, player.duration.coerceAtLeast(0))
             }
+            val ready = player.playbackState == Player.STATE_READY
+            if (ready) errorStreak = 0
             _state.update {
                 it.copy(
                     queue = queue,
@@ -171,17 +230,20 @@ class PlayerConnection(private val context: Context) {
                     repeatMode = player.repeatMode,
                     shuffleEnabled = player.shuffleModeEnabled,
                     speed = player.playbackParameters.speed,
+                    errorMessage = if (ready) null else it.errorMessage,
                 )
             }
         }.onFailure { e ->
-            android.util.Log.e("tplay-player", "sync failed", e)
+            Log.e(TAG, "sync failed", e)
         }
     }
 
     // ---- commands ----
 
     fun play() {
-        controller?.play()
+        val c = controller ?: return
+        if (c.playerError != null) c.prepare()  // a failed item needs prepare() before play()
+        c.play()
     }
 
     fun pause() {
@@ -190,7 +252,14 @@ class PlayerConnection(private val context: Context) {
 
     fun toggle() {
         val c = controller ?: return
-        if (c.isPlaying) c.pause() else c.play()
+        when {
+            c.playerError != null -> {
+                c.prepare()
+                c.play()
+            }
+            c.isPlaying -> c.pause()
+            else -> c.play()
+        }
     }
 
     fun next() {
@@ -210,18 +279,23 @@ class PlayerConnection(private val context: Context) {
 
     fun cycleRepeat() {
         controller?.let { c ->
-            c.repeatMode = (c.repeatMode + 1) % 3
+            val next = (c.repeatMode + 1) % 3
+            c.repeatMode = next
+            scope.launch { SettingsStore(context).setRepeat(next) }
         }
     }
 
     fun toggleShuffle() {
         controller?.let { c ->
-            c.shuffleModeEnabled = !c.shuffleModeEnabled
+            val next = !c.shuffleModeEnabled
+            c.shuffleModeEnabled = next
+            scope.launch { SettingsStore(context).setShuffle(next) }
         }
     }
 
     fun setSpeed(speed: Float) {
         controller?.setPlaybackSpeed(speed)
+        scope.launch { SettingsStore(context).setSpeed(speed) }
     }
 
     fun playSong(song: Song) {
@@ -289,8 +363,10 @@ class PlayerConnection(private val context: Context) {
             hapticBassEnabled = false
             HapticBass.stop()
         } else {
+            val sessionId = PlayerService.audioSessionId
+            if (sessionId <= 0) return  // no active audio session yet — don't fake "ON"
             hapticBassEnabled = true
-            HapticBass.start(context, PlayerService.audioSessionId, hapticBassStep)
+            HapticBass.start(context, sessionId, hapticBassStep)
         }
     }
 

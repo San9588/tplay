@@ -45,6 +45,46 @@ data class SongJson(
     val channel: String?,
 )
 
+/**
+ * Recently played YouTube songs (metadata + links only, no artwork bytes).
+ * A bounded cache: older entries are evicted once the total exceeds
+ * [RecentSongsRepository.MAX_CACHE_BYTES], so it stays ~2 MB max.
+ */
+@Entity(tableName = "recent_songs")
+data class RecentSongEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val uri: String,
+    val artUri: String?,
+    val source: String,
+    val albumId: Long,
+    val videoId: String?,
+    val channel: String?,
+    val playedAt: Long,
+) {
+    fun toSongJson(): SongJson = SongJson(
+        id = id,
+        title = title,
+        artist = artist,
+        album = album,
+        durationMs = durationMs,
+        uri = uri,
+        artUri = artUri,
+        source = source,
+        albumId = albumId,
+        videoId = videoId,
+        channel = channel,
+    )
+
+    /** Rough in-memory/disk footprint (UTF-16 chars + object overhead). */
+    fun estimatedBytes(): Long =
+        128L + (id.length + title.length + artist.length + album.length + uri.length +
+            (artUri?.length ?: 0) + (videoId?.length ?: 0) + (channel?.length ?: 0)) * 2L
+}
+
 @Dao
 interface PlaylistDao {
 
@@ -98,17 +138,55 @@ interface PlaylistDao {
     }
 }
 
+@Dao
+interface RecentSongsDao {
+
+    @Query("SELECT * FROM recent_songs ORDER BY playedAt DESC LIMIT :limit")
+    suspend fun loadRecent(limit: Int): List<RecentSongEntity>
+
+    @Query("SELECT * FROM recent_songs ORDER BY playedAt ASC")
+    suspend fun allOldestFirst(): List<RecentSongEntity>
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(items: List<RecentSongEntity>)
+
+    @Query("DELETE FROM recent_songs WHERE id = :id")
+    suspend fun delete(id: String)
+}
+
 @Database(
-    entities = [PlaylistEntity::class, PlaylistItemEntity::class, SongJson::class],
-    version = 1,
+    entities = [PlaylistEntity::class, PlaylistItemEntity::class, SongJson::class, RecentSongEntity::class],
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
+    abstract fun recentSongsDao(): RecentSongsDao
 
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `recent_songs` (" +
+                        "`id` TEXT NOT NULL, " +
+                        "`title` TEXT NOT NULL, " +
+                        "`artist` TEXT NOT NULL, " +
+                        "`album` TEXT NOT NULL, " +
+                        "`durationMs` INTEGER NOT NULL, " +
+                        "`uri` TEXT NOT NULL, " +
+                        "`artUri` TEXT, " +
+                        "`source` TEXT NOT NULL, " +
+                        "`albumId` INTEGER NOT NULL, " +
+                        "`videoId` TEXT, " +
+                        "`channel` TEXT, " +
+                        "`playedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))",
+                )
+            }
+        }
 
         fun getDatabase(context: android.content.Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
@@ -117,6 +195,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "tplay.db",
                 )
+                    .addMigrations(MIGRATION_1_2)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

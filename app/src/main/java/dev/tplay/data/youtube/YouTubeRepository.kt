@@ -4,14 +4,19 @@ import android.util.Log
 import dev.tplay.data.model.Song
 import dev.tplay.data.model.SongSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.MediaFormat
+import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.exceptions.ExtractionException
+import org.schabi.newpipe.extractor.stream.Stream
 import org.schabi.newpipe.extractor.stream.StreamExtractor
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.utils.Parser
+import java.util.concurrent.ConcurrentHashMap
 
 class YouTubeRepository(
     private val downloader: OkHttpDownloader,
@@ -27,17 +32,33 @@ class YouTubeRepository(
 
     suspend fun search(query: String, limit: Int = 30): List<Song> = withContext(io) {
         init()
-        runCatching {
-            val extractor = ServiceList.YouTube.getSearchExtractor(query)
-            extractor.fetchPage()
-            extractor.initialPage.items
-                .filterIsInstance<StreamInfoItem>()
-                .take(limit)
-                .mapNotNull { it.toSong() }
-        }.getOrElse {
-            Log.e(TAG, "search failed: ${it.message}", it)
-            emptyList()
-        }
+        val extractor = ServiceList.YouTube.getSearchExtractor(query)
+        extractor.fetchPage()
+        extractor.initialPage.items
+            .filterIsInstance<StreamInfoItem>()
+            .take(limit)
+            .mapNotNull { it.toSong() }
+    }
+
+    /**
+     * India trending list (YouTube Music charts — the music-player equivalent of the
+     * old Trending kiosk, which YouTube removed in July 2025). Falls back to the
+     * legacy Trending kiosk and then to the service default kiosk.
+     */
+    suspend fun trendingIndia(limit: Int = 30): List<Song> = withContext(io) {
+        init()
+        val kioskList = ServiceList.YouTube.getKioskList()
+        kioskList.forceContentCountry(ContentCountry("IN"))
+        val extractor = listOf("trending_music", "Trending")
+            .firstNotNullOfOrNull { id ->
+                runCatching { kioskList.getExtractorById(id, null) }.getOrNull()
+            }
+            ?: kioskList.getDefaultKioskExtractor()
+        extractor.fetchPage()
+        extractor.initialPage.items
+            .filterIsInstance<StreamInfoItem>()
+            .take(limit)
+            .mapNotNull { it.toSong() }
     }
 
     suspend fun resolveVideo(urlOrId: String): Song = withContext(io) {
@@ -66,13 +87,24 @@ class YouTubeRepository(
         )
     }
 
+    /**
+     * Resolves a whole queue efficiently: duplicate video ids are resolved only once
+     * and the list is processed in small parallel batches so YouTube doesn't
+     * rate-limit the app (sequential resolution of a 30-song queue took minutes).
+     */
     suspend fun resolveQueue(songs: List<Song>): List<Song> = withContext(io) {
-        songs.map { song ->
-            if (song.source == SongSource.YOUTUBE && song.videoId != null) {
-                runCatching { resolveVideo(song.videoId!!) }
-                    .onFailure { Log.e(TAG, "resolve failed for ${song.videoId}: ${it.message}") }
-                    .getOrElse { song }
-            } else song
+        val resolvedByVideoId = ConcurrentHashMap<String, Song>()
+        suspend fun resolveOne(song: Song): Song {
+            if (song.source != SongSource.YOUTUBE || song.videoId == null) return song
+            resolvedByVideoId[song.videoId]?.let { return it }
+            val result = runCatching { resolveVideo(song.videoId!!) }
+                .onFailure { Log.e(TAG, "resolve failed for ${song.videoId}: ${it.message}") }
+                .getOrElse { song }
+            resolvedByVideoId[song.videoId!!] = result
+            return result
+        }
+        songs.chunked(4).flatMap { batch ->
+            coroutineScope { batch.map { async(io) { resolveOne(it) } }.awaitAll() }
         }
     }
 
@@ -102,9 +134,13 @@ class YouTubeRepository(
         return ""
     }
 
-    private fun streamUrlOf(stream: org.schabi.newpipe.extractor.stream.Stream): String? {
-        if (!stream.url.isNullOrBlank()) return stream.url
-        if (stream.isUrl) return stream.content
+    private fun streamUrlOf(stream: Stream): String? {
+        // In newer extractor versions the URL lives in `content` (getUrl() is deprecated
+        // and returns null when the stream isn't flagged as a URL).
+        val content = stream.content
+        if (!content.isNullOrBlank() && (stream.isUrl || content.startsWith("http"))) {
+            return content
+        }
         return null
     }
 
