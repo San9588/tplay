@@ -177,9 +177,9 @@ fun BlinkingCursor(
             delay(530)
         }
     }
-    // Always occupy the same width (non-breaking space when off) so the surrounding
-    // title/layout does not shift while the cursor blinks.
-    TuiText(if (on) "_" else "\u00A0", modifier = modifier, color = color, size = size)
+    // Always render "_" but toggle text color to Transparent when off so the layout width
+    // never changes by even a fraction of a pixel and surrounding text never shifts.
+    TuiText("_", modifier = modifier, color = if (on) color else Color.Transparent, size = size)
 }
 
 @Composable

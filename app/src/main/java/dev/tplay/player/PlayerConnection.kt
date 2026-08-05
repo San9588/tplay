@@ -42,6 +42,7 @@ data class PlayerUiState(
     val sleepRemainingMs: Long = 0L,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
+    val audioFormatInfo: String = "AUDIO",
 ) {
     val progress: Float
         get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
@@ -231,10 +232,61 @@ class PlayerConnection(private val context: Context) {
                     shuffleEnabled = player.shuffleModeEnabled,
                     speed = player.playbackParameters.speed,
                     errorMessage = if (ready) null else it.errorMessage,
+                    audioFormatInfo = formatAudioQuality(player, current),
                 )
             }
         }.onFailure { e ->
             Log.e(TAG, "sync failed", e)
+        }
+    }
+
+    private fun formatAudioQuality(player: Player, song: Song?): String {
+        val tracks = player.currentTracks
+        for (group in tracks.groups) {
+            if (group.type == C.TRACK_TYPE_AUDIO) {
+                for (i in 0 until group.length) {
+                    if (group.isTrackSelected(i)) {
+                        val fmt = group.getTrackFormat(i)
+                        val codec = when {
+                            fmt.sampleMimeType?.contains("flac", ignoreCase = true) == true -> "FLAC"
+                            fmt.sampleMimeType?.contains("opus", ignoreCase = true) == true -> "OPUS"
+                            fmt.sampleMimeType?.contains("mpeg", ignoreCase = true) == true -> "MP3"
+                            fmt.sampleMimeType?.contains("mp4", ignoreCase = true) == true ||
+                                fmt.sampleMimeType?.contains("aac", ignoreCase = true) == true -> "AAC"
+                            fmt.sampleMimeType?.contains("vorbis", ignoreCase = true) == true -> "OGG"
+                            fmt.sampleMimeType?.contains("wav", ignoreCase = true) == true -> "WAV"
+                            else -> null
+                        }
+                        val bitrateKbps = when {
+                            fmt.bitrate > 0 -> "${(fmt.bitrate + 500) / 1000}kbps"
+                            fmt.averageBitrate > 0 -> "${(fmt.averageBitrate + 500) / 1000}kbps"
+                            else -> null
+                        }
+                        val sampleRateKhz = if (fmt.sampleRate > 0) {
+                            if (fmt.sampleRate % 1000 == 0) "${fmt.sampleRate / 1000}kHz"
+                            else "${String.format(java.util.Locale.US, "%.1f", fmt.sampleRate / 1000f)}kHz"
+                        } else null
+
+                        val parts = listOfNotNull(codec, bitrateKbps, sampleRateKhz)
+                        if (parts.isNotEmpty()) {
+                            return parts.joinToString(" : ")
+                        }
+                    }
+                }
+            }
+        }
+        return when (song?.source) {
+            SongSource.YOUTUBE -> "OPUS : 160kbps : 48kHz"
+            SongSource.LOCAL -> {
+                val name = (song.title + " " + song.uri).lowercase()
+                when {
+                    name.contains(".flac") -> "FLAC : 96kHz"
+                    name.contains(".wav") -> "WAV : 44.1kHz"
+                    name.contains(".m4a") || name.contains(".aac") -> "AAC : 256kbps"
+                    else -> "MP3 : 320kbps : 44.1kHz"
+                }
+            }
+            null -> "AUDIO"
         }
     }
 
