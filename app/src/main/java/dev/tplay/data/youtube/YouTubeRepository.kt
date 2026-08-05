@@ -91,7 +91,7 @@ class YouTubeRepository(
         }
         runCatching { extractor.videoStreams }.getOrNull().orEmpty().let { streams ->
             if (streams.isNotEmpty()) {
-                val muxed = streams.maxByOrNull { it.averageBitrate }
+                val muxed = streams.maxByOrNull { it.bitrate }
                 if (muxed != null) {
                     streamUrlOf(muxed)?.let { return it }
                 }
@@ -102,9 +102,8 @@ class YouTubeRepository(
 
     private fun streamUrlOf(stream: org.schabi.newpipe.extractor.stream.Stream): String? {
         if (!stream.url.isNullOrBlank()) return stream.url
-        val alt = runCatching { stream.downloadUrls }.getOrNull()
-            ?.firstOrNull { it.isNotBlank() }
-        return alt
+        if (stream.isUrl) return stream.content
+        return null
     }
 
     private fun StreamInfoItem.toSong(): Song {
