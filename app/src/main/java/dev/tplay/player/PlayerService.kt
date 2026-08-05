@@ -1,8 +1,11 @@
 package dev.tplay.player
 
 import android.content.Context
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -16,9 +19,24 @@ class PlayerService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
 
+    companion object {
+        private const val TAG = "tplay-player"
+    }
+
     override fun onCreate() {
         super.onCreate()
         val player = buildPlayer(this)
+        player.addListener(object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                Log.e(TAG, "player error: ${error.errorCodeName} ${error.message}", error)
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_IDLE) {
+                    player.playerError?.let { Log.e(TAG, "player idle: ${it.errorCodeName} ${it.message}") }
+                }
+            }
+        })
         val session = MediaSession.Builder(this, player).build()
         mediaSession = session
         setMediaNotificationProvider(

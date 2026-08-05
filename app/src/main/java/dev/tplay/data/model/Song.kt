@@ -34,4 +34,27 @@ data class Song(
             .setMediaMetadata(metadata)
             .build()
     }
+
+    companion object {
+        // MediaItem.tag is omitted when a MediaItem crosses the MediaSession binder, so the
+        // controller only sees mediaId + mediaMetadata. This reconstructs a best-effort Song
+        // (used as a fallback when the item was set outside PlayerConnection, e.g. after an
+        // app-process restart while the service keeps playing).
+        fun fromMediaItem(item: MediaItem, durationMs: Long): Song {
+            val md = item.mediaMetadata
+            val id = item.mediaId
+            return Song(
+                id = id,
+                title = md.title?.toString() ?: "unknown",
+                artist = md.artist?.toString() ?: "",
+                album = md.albumTitle?.toString() ?: "",
+                durationMs = durationMs,
+                uri = "",
+                artUri = md.artworkUri?.toString(),
+                source = if (id.startsWith("yt:")) SongSource.YOUTUBE else SongSource.LOCAL,
+                videoId = id.removePrefix("yt:").takeIf { id.startsWith("yt:") },
+                channel = md.artist?.toString(),
+            )
+        }
+    }
 }

@@ -66,6 +66,10 @@ class PlayerConnection(private val context: Context) {
     private var sleepJob: Job? = null
     private var tickerJob: Job? = null
 
+    // MediaItem.tag is dropped when items cross the MediaSession binder, so keep our own
+    // mediaId -> Song registry to rebuild the UI queue/currentSong in sync().
+    private val queueById = mutableMapOf<String, Song>()
+
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
@@ -132,9 +136,12 @@ class PlayerConnection(private val context: Context) {
         if (player is MediaController && !player.isConnected) return
         val count = player.mediaItemCount
         val queue = (0 until count).mapNotNull { idx ->
-            player.getMediaItemAt(idx).localConfiguration?.tag as? Song
+            val item = player.getMediaItemAt(idx)
+            queueById[item.mediaId] ?: Song.fromMediaItem(item, item.mediaMetadata.durationMs ?: 0L)
         }
-        val current = player.currentMediaItem?.localConfiguration?.tag as? Song
+        val current = player.currentMediaItem?.let { item ->
+            queueById[item.mediaId] ?: Song.fromMediaItem(item, player.duration.coerceAtLeast(0))
+        }
         _state.update {
             it.copy(
                 queue = queue,
@@ -199,6 +206,8 @@ class PlayerConnection(private val context: Context) {
 
     fun playSong(song: Song) {
         val c = controller ?: return
+        queueById.clear()
+        queueById[song.id] = song
         c.setMediaItem(song.mediaItem())
         c.prepare()
         c.play()
@@ -206,6 +215,8 @@ class PlayerConnection(private val context: Context) {
 
     fun playQueue(songs: List<Song>, index: Int) {
         val c = controller ?: return
+        queueById.clear()
+        songs.forEach { queueById[it.id] = it }
         val items = songs.map { it.mediaItem() }
         c.setMediaItems(items, index, 0)
         c.prepare()
@@ -214,6 +225,7 @@ class PlayerConnection(private val context: Context) {
 
     fun enqueue(song: Song) {
         val c = controller ?: return
+        queueById[song.id] = song
         c.addMediaItem(song.mediaItem())
         if (c.playbackState == Player.STATE_IDLE) {
             c.prepare()
@@ -222,13 +234,16 @@ class PlayerConnection(private val context: Context) {
 
     fun enqueueNext(song: Song) {
         val c = controller ?: return
+        queueById[song.id] = song
         val nextIndex = if (c.currentMediaItemIndex == C.INDEX_UNSET) 0
         else c.currentMediaItemIndex + 1
         c.addMediaItem(nextIndex, song.mediaItem())
     }
 
     fun removeFromQueue(index: Int) {
-        controller?.removeMediaItem(index)
+        val c = controller ?: return
+        runCatching { c.getMediaItemAt(index).mediaId }.getOrNull()?.let { queueById.remove(it) }
+        c.removeMediaItem(index)
     }
 
     fun jumpTo(index: Int) {
@@ -236,6 +251,7 @@ class PlayerConnection(private val context: Context) {
     }
 
     fun clearQueue() {
+        queueById.clear()
         controller?.clearMediaItems()
         _state.update { it.copy(queue = emptyList(), currentSong = null) }
     }

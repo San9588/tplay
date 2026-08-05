@@ -30,7 +30,6 @@ import dev.tplay.ui.theme.TuiGreen
 
 @Composable
 fun SettingsScreen(vm: MainViewModel) {
-    val settings by vm.settings.collectAsState()
     val playerState by vm.playerState.collectAsState()
 
     Column(
@@ -46,15 +45,15 @@ fun SettingsScreen(vm: MainViewModel) {
         Spacer(Modifier.padding(4.dp))
 
         AsciiBox(title = " PLAYBACK ") {
-            val speedLabel = "%.2fx".format(settings.playbackSpeed)
+            val speedLabel = "%.2fx".format(playerState.speed)
             Column {
                 TuiText("speed  [$speedLabel]", color = TuiFg)
                 Row {
                     listOf(0.75f, 1f, 1.25f, 1.5f, 2f).forEach { s ->
                         TuiIconButton(
-                            label = if (s == settings.playbackSpeed) "[${s}x]" else "${s}x",
+                            label = if (s == playerState.speed) "[${s}x]" else "${s}x",
                             onClick = { vm.setSpeed(s) },
-                            accent = s == settings.playbackSpeed,
+                            accent = s == playerState.speed,
                         )
                     }
                 }
