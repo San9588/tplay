@@ -11,6 +11,7 @@ import dev.tplay.data.model.YtStage
 import dev.tplay.data.prefs.SettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -95,9 +96,11 @@ class YouTubeRepository(
         onStage: (YtStage) -> Unit = {},
     ): Song = withContext(io) {
         var lastError: Exception? = null
-        repeat(2) { attempt ->
+        for (attempt in 0 until 2) {
             try {
                 return@withContext doResolveVideo(urlOrId, onStage)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 lastError = e
                 if (attempt == 0) delay(800)

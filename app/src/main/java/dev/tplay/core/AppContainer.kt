@@ -38,7 +38,7 @@ class AppContainer(context: Context) {
     }
 
     val recentSongsRepository: RecentSongsRepository by lazy {
-        RecentSongsRepository(database.recentSongsDao())
+        RecentSongsRepository(database)
     }
 
     val playerConnection = PlayerConnection(appContext)

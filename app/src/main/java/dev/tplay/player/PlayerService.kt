@@ -52,13 +52,11 @@ class PlayerService : MediaSessionService() {
         })
         val session = MediaSession.Builder(this, player).build()
         mediaSession = session
+        // DefaultMediaNotificationProvider.Builder has no notification-timeout option in
+        // media3 1.4.1 (the "shedding" in the logs was caused by the stream-error loop,
+        // which the extractor upgrade fixes at the root).
         setMediaNotificationProvider(
-            DefaultMediaNotificationProvider.Builder(this)
-                // Media3 re-posts the notification on every playback-state change; the
-                // default 1s debounce can exceed the system ~5/s enqueue rate when a
-                // queue of streams fails quickly, and the system sheds the notification.
-                .setNotificationTimeoutMs(2_000)
-                .build(),
+            DefaultMediaNotificationProvider.Builder(this).build(),
         )
     }
 
@@ -90,7 +88,7 @@ class PlayerService : MediaSessionService() {
         // sends them on every request. OkHttpDataSource reuses the same OkHttp client as
         // NewPipeExtractor (same UA, connection pool, TLS config) for consistent behavior.
         val httpFactory = OkHttpDataSource.Factory((application as TermPlayApp).container.okHttp)
-            .setAllowCrossProtocolRedirects(true)
+            // (Redirects incl. cross-protocol are followed by OkHttp itself by default.)
             .setDefaultRequestProperties(
                 mapOf(
                     "User-Agent" to OkHttpDownloader.USER_AGENT,

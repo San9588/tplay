@@ -12,10 +12,11 @@ import kotlinx.coroutines.withContext
  * metadata exceeds [MAX_CACHE_BYTES] (2 MB), so the cache can never grow out of
  * control even after very long usage.
  */
-class RecentSongsRepository(private val dao: RecentSongsDao) {
+class RecentSongsRepository(private val database: AppDatabase) {
 
     /** Fresh entries first. */
-    suspend fun loadRecent(limit: Int = 60): List<RecentSongEntity> = dao.loadRecent(limit)
+    suspend fun loadRecent(limit: Int = 60): List<RecentSongEntity> =
+        database.recentSongsDao().loadRecent(limit)
 
     /**
      * Merges the pending in-memory entries with what is already on disk, enforces the
@@ -24,7 +25,8 @@ class RecentSongsRepository(private val dao: RecentSongsDao) {
     suspend fun batchWrite(pending: List<RecentSongEntity>) {
         if (pending.isEmpty()) return
         withContext(Dispatchers.IO) {
-            dao.withTransaction {
+            database.withTransaction {
+                val dao = database.recentSongsDao()
                 val merged = LinkedHashMap<String, RecentSongEntity>()
                 dao.allOldestFirst().forEach { merged[it.id] = it }
                 pending.forEach { merged[it.id] = it }
