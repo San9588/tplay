@@ -48,8 +48,24 @@ class YouTubeRepository(
     ): List<Song> = withContext(io) {
         init()
         onStage(YtStage.FETCH)
-        val extractor = ServiceList.YouTube.getSearchExtractor(query)
-        extractor.fetchPage()
+        // Primary: YouTube Music "music_songs" filter so only official songs are returned.
+        // Fallback 1: "music_videos" filter if no song results exist.
+        // Fallback 2: General YouTube search if both music filters yield no results.
+        val extractor = listOf("music_songs", "music_videos", "")
+            .firstNotNullOfOrNull { filter ->
+                runCatching {
+                    val ex = if (filter.isNotEmpty()) {
+                        ServiceList.YouTube.getSearchExtractor(query, listOf(filter), null)
+                    } else {
+                        ServiceList.YouTube.getSearchExtractor(query)
+                    }
+                    ex.fetchPage()
+                    ex.takeIf { it.initialPage.items.isNotEmpty() }
+                }.getOrNull()
+            }
+            ?: ServiceList.YouTube.getSearchExtractor(query).also {
+                runCatching { it.fetchPage() }
+            }
         onStage(YtStage.PARSE)
         val items = extractor.initialPage.items
             .filterIsInstance<StreamInfoItem>()
