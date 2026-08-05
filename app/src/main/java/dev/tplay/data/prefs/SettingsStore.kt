@@ -20,6 +20,8 @@ data class Settings(
     val bufferMs: Int = 50_000,
     val accent: String = "orange",
     val systemAccent: Boolean = false,
+    val wifiQuality: String = "HIGH",
+    val mobileQuality: String = "LOW",
 )
 
 class SettingsStore(private val context: Context) {
@@ -31,6 +33,8 @@ class SettingsStore(private val context: Context) {
         val BUFFER = intPreferencesKey("buffer")
         val ACCENT = androidx.datastore.preferences.core.stringPreferencesKey("accent")
         val SYSTEM_ACCENT = booleanPreferencesKey("system_accent")
+        val WIFI_QUALITY = androidx.datastore.preferences.core.stringPreferencesKey("wifi_quality")
+        val MOBILE_QUALITY = androidx.datastore.preferences.core.stringPreferencesKey("mobile_quality")
     }
 
     val settings: Flow<Settings> = context.dataStore.data.map { prefs ->
@@ -41,6 +45,8 @@ class SettingsStore(private val context: Context) {
             bufferMs = prefs[Keys.BUFFER] ?: 50_000,
             accent = prefs[Keys.ACCENT] ?: "orange",
             systemAccent = prefs[Keys.SYSTEM_ACCENT] ?: false,
+            wifiQuality = prefs[Keys.WIFI_QUALITY] ?: "HIGH",
+            mobileQuality = prefs[Keys.MOBILE_QUALITY] ?: "LOW",
         )
     }
 
@@ -66,5 +72,13 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setSystemAccent(enabled: Boolean) = context.dataStore.edit {
         it[Keys.SYSTEM_ACCENT] = enabled
+    }
+
+    suspend fun setWifiQuality(name: String) = context.dataStore.edit {
+        it[Keys.WIFI_QUALITY] = name
+    }
+
+    suspend fun setMobileQuality(name: String) = context.dataStore.edit {
+        it[Keys.MOBILE_QUALITY] = name
     }
 }

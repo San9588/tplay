@@ -1,5 +1,6 @@
 package dev.tplay.ui
 
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -10,12 +11,17 @@ import androidx.lifecycle.viewModelScope
 import dev.tplay.core.AppContainer
 import dev.tplay.data.local.PlaylistEntity
 import dev.tplay.data.local.PlaylistWithSongs
+import dev.tplay.data.local.RecentSongEntity
+import dev.tplay.data.local.RecentSongsRepository
 import dev.tplay.data.local.SongJson
 import dev.tplay.data.lyrics.Lyrics
 import dev.tplay.data.model.Song
 import dev.tplay.data.model.SongSource
+import dev.tplay.data.model.YtQuality
+import dev.tplay.data.model.YtStage
 import dev.tplay.player.PlayerConnection
 import dev.tplay.player.PlayerUiState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -90,6 +96,10 @@ class MainViewModel(
     var youtubeError by mutableStateOf<String?>(null)
         private set
 
+    // live pipeline status shown as a single strip on the YouTube tab
+    var ytStage by mutableStateOf(YtStage.IDLE)
+        private set
+
     // playlists
     val playlists: StateFlow<List<PlaylistEntity>> = container.database.playlistDao()
         .observePlaylists()
@@ -122,6 +132,46 @@ class MainViewModel(
 
     private var lastLyricsSongId: String? = null
 
+    // ---- recent songs cache (in-memory until the app closes, then one batch write) ----
+
+    private val pendingRecents = LinkedHashMap<String, RecentSongEntity>()
+
+    private fun recordRecent(song: Song) {
+        if (song.source != SongSource.YOUTUBE) return
+        val entry = RecentSongEntity(
+            id = song.id,
+            title = song.title,
+            artist = song.artist,
+            album = song.album,
+            durationMs = song.durationMs,
+            uri = song.uri,
+            artUri = song.artUri,
+            source = song.source.name,
+            albumId = song.albumId,
+            videoId = song.videoId,
+            channel = song.channel,
+            playedAt = System.currentTimeMillis(),
+        )
+        pendingRecents.remove(entry.id)  // re-insert at the tail = freshest last
+        pendingRecents[entry.id] = entry
+        // Keep the in-memory cache inside the same 2 MB budget as the disk cache.
+        var total = pendingRecents.values.sumOf { it.estimatedBytes() }
+        val it = pendingRecents.entries.iterator()
+        while (total > RecentSongsRepository.MAX_CACHE_BYTES && it.hasNext()) {
+            val oldest = it.next()
+            it.remove()
+            total -= oldest.value.estimatedBytes()
+        }
+    }
+
+    /** Called when the app is closing — persists all pending entries in one batch. */
+    fun flushRecentSongs() {
+        if (pendingRecents.isEmpty()) return
+        val batch = pendingRecents.values.toList()
+        pendingRecents.clear()
+        viewModelScope.launch { container.recentSongsRepository.batchWrite(batch) }
+    }
+
     init {
         viewModelScope.launch {
             playerState.collect { st ->
@@ -133,16 +183,76 @@ class MainViewModel(
                     lastLyricsSongId = st.currentSong?.id
                     loadLyrics(st.currentSong)
                 }
+                // Surface playback failures (expired/403 streams) in the YouTube tab.
+                val err = st.errorMessage
+                if (err != null && st.currentSong?.source == SongSource.YOUTUBE &&
+                    (youtubeError == null || youtubeError!!.startsWith("playback"))
+                ) {
+                    youtubeError = "playback: $err"
+                } else if (err == null && youtubeError?.startsWith("playback") == true) {
+                    youtubeError = null
+                }
+                // Live pipeline status for the YouTube tab strip.
+                if (st.isPlaying && st.currentSong?.source == SongSource.YOUTUBE) {
+                    ytStage = YtStage.PLAYING
+                } else if (ytStage == YtStage.PLAYING) {
+                    ytStage = if (st.currentSong?.source == SongSource.YOUTUBE) {
+                        YtStage.READY
+                    } else {
+                        YtStage.IDLE
+                    }
+                }
             }
         }
         refreshLibrary()
+    }
+
+    // Repository callbacks arrive on the IO dispatcher; hop to main before writing the
+    // compose state that drives the status strip.
+    private fun stageUpdater(): (YtStage) -> Unit = { s ->
+        viewModelScope.launch(Dispatchers.Main.immediate) { ytStage = s }
     }
 
     // ---- navigation ----
 
     fun selectTab(t: Tab) {
         tab = t
-        if (t == Tab.LIBRARY) refreshLibrary()
+        when (t) {
+            Tab.LIBRARY -> refreshLibrary()
+            Tab.YOUTUBE -> ensureYoutubeContent()
+            else -> Unit
+        }
+    }
+
+    /**
+     * First open of the YouTube tab (or after a restart, when nothing has been searched
+     * yet): show the last played songs (freshest on top); on a truly first run show the
+     * India trending list instead of a blank page.
+     */
+    private fun ensureYoutubeContent() {
+        if (searchResults.isNotEmpty() || searchLoading) return
+        viewModelScope.launch {
+            searchLoading = true
+            youtubeError = null
+            val recents = container.recentSongsRepository.loadRecent(60)
+                .map { it.toSongJson().toSong() }
+            if (recents.isNotEmpty()) {
+                searchResults = recents
+                ytStage = YtStage.READY
+            } else {
+                val trending = runCatching {
+                    container.youtubeRepository.trendingIndia(onStage = stageUpdater())
+                }
+                    .onFailure {
+                        Log.e(TAG, "trending failed", it)
+                        ytStage = YtStage.IDLE
+                    }
+                    .getOrDefault(emptyList())
+                searchResults = trending
+                if (trending.isEmpty()) youtubeError = "trending unavailable — try a search"
+            }
+            searchLoading = false
+        }
     }
 
     fun openPlayer() {
@@ -183,7 +293,15 @@ class MainViewModel(
         if (q.isEmpty() || searchLoading) return
         viewModelScope.launch {
             searchLoading = true
-            searchResults = container.youtubeRepository.search(q)
+            youtubeError = null
+            val results = runCatching { container.youtubeRepository.search(q, onStage = stageUpdater()) }
+                .onFailure {
+                    Log.e(TAG, "search failed", it)
+                    ytStage = YtStage.IDLE
+                }
+                .getOrDefault(emptyList())
+            searchResults = results
+            if (results.isEmpty()) youtubeError = "search failed or no results"
             searchLoading = false
         }
     }
@@ -195,10 +313,12 @@ class MainViewModel(
             resolvingId = id
             player?.setLoading(true)
             runCatching {
-                val resolved = container.youtubeRepository.resolveVideo(id)
+                val resolved = container.youtubeRepository.resolveVideo(id, onStage = stageUpdater())
+                recordRecent(resolved)
                 player?.playSong(resolved)
             }.onFailure { e ->
                 youtubeError = e.message ?: "failed to resolve stream"
+                ytStage = YtStage.IDLE
                 resolvingId = null
                 player?.setLoading(false)
             }
@@ -215,10 +335,12 @@ class MainViewModel(
         viewModelScope.launch {
             player?.setLoading(true)
             runCatching {
-                val resolved = container.youtubeRepository.resolveQueue(songs)
+                val resolved = container.youtubeRepository.resolveQueue(songs, onStage = stageUpdater())
+                resolved.forEach { recordRecent(it) }
                 player?.playQueue(resolved, index)
             }.onFailure { e ->
                 youtubeError = e.message ?: "failed to resolve queue"
+                ytStage = YtStage.IDLE
             }.onSuccess {
                 showPlayer = true
             }
@@ -258,18 +380,20 @@ class MainViewModel(
     suspend fun playlistSongs(id: Long): List<Song> =
         container.database.playlistDao().getSongs(id).map { it.toSong() }
 
-    fun playPlaylist(id: Long) {
+    fun playPlaylist(id: Long, index: Int = 0) {
         viewModelScope.launch {
             val songs = container.database.playlistDao().getSongs(id).map { it.toSong() }
             if (songs.isEmpty()) return@launch
+            val start = index.coerceIn(0, songs.lastIndex)
             val needsResolve = songs.any { it.source == SongSource.YOUTUBE && it.videoId != null }
             if (needsResolve) {
                 player?.setLoading(true)
                 val resolved = container.youtubeRepository.resolveQueue(songs)
                 player?.setLoading(false)
-                player?.playQueue(resolved, 0)
+                resolved.forEach { recordRecent(it) }
+                player?.playQueue(resolved, start)
             } else {
-                player?.playQueue(songs, 0)
+                player?.playQueue(songs, start)
             }
             showPlayer = true
         }
@@ -298,6 +422,7 @@ class MainViewModel(
                 val resolved = runCatching { container.youtubeRepository.resolveVideo(song.videoId!!) }
                     .getOrElse { song }
                 player?.setLoading(false)
+                recordRecent(resolved)
                 player?.enqueue(resolved)
             } else {
                 player?.enqueue(song)
@@ -311,12 +436,14 @@ class MainViewModel(
     // ---- haptic bass ----
 
     fun toggleHapticBass() {
-        hapticBassEnabled = !hapticBassEnabled
         if (hapticBassEnabled) {
-            val pc = player ?: return
-            dev.tplay.player.HapticBass.start(container.appContext, pc.audioSessionId(), hapticBassStep)
-        } else {
+            hapticBassEnabled = false
             dev.tplay.player.HapticBass.stop()
+        } else {
+            val pc = player ?: return
+            if (pc.audioSessionId() <= 0) return  // no audio session yet — don't fake "ON"
+            hapticBassEnabled = true
+            dev.tplay.player.HapticBass.start(container.appContext, pc.audioSessionId(), hapticBassStep)
         }
     }
 
@@ -330,6 +457,18 @@ class MainViewModel(
     fun setSystemAccent(enabled: Boolean) {
         viewModelScope.launch {
             container.settingsStore.setSystemAccent(enabled)
+        }
+    }
+
+    fun setWifiQuality(q: YtQuality) {
+        viewModelScope.launch {
+            container.settingsStore.setWifiQuality(q.name)
+        }
+    }
+
+    fun setMobileQuality(q: YtQuality) {
+        viewModelScope.launch {
+            container.settingsStore.setMobileQuality(q.name)
         }
     }
 
@@ -384,5 +523,9 @@ class MainViewModel(
             coverError = true
             container.artCache.placeholderAsync(song.id, song.id.hashCode().toLong())
         }
+    }
+
+    companion object {
+        private const val TAG = "tplay-vm"
     }
 }

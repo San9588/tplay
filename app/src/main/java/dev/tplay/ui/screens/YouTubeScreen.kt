@@ -1,5 +1,6 @@
 package dev.tplay.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,13 +23,16 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tplay.core.formatTime
+import dev.tplay.data.model.YtStage
 import dev.tplay.ui.MainViewModel
 import dev.tplay.ui.components.AsciiBox
+import dev.tplay.ui.components.BlinkingCursor
 import dev.tplay.ui.components.SelectableRow
 import dev.tplay.ui.components.TuiIconButton
 import dev.tplay.ui.components.TuiText
@@ -77,6 +81,18 @@ fun YouTubeScreen(vm: MainViewModel) {
                     accent = true,
                 )
             }
+        }
+
+        // live pipeline status — one strip, active stage blinks
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 3.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StageChip("fetch", vm.ytStage == YtStage.FETCH, accent)
+            StageChip("parse", vm.ytStage == YtStage.PARSE, accent)
+            StageChip("ready", vm.ytStage == YtStage.READY, accent)
+            StageChip("playing", vm.ytStage == YtStage.PLAYING, accent)
         }
 
         if (resolving != null) {
@@ -128,5 +144,20 @@ fun YouTubeScreen(vm: MainViewModel) {
             }
             item { Spacer(Modifier.padding(16.dp)) }
         }
+    }
+}
+
+/** One status chip, e.g. `[fetch_]` — the underscore blinks while the stage is active. */
+@Composable
+private fun StageChip(label: String, active: Boolean, accent: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TuiText("[", color = if (active) accent else TuiFaint, size = 10)
+        TuiText(label, color = if (active) accent else TuiFaint, size = 10)
+        if (active) {
+            BlinkingCursor(color = accent, size = 10)
+        } else {
+            TuiText("_", color = TuiFaint, size = 10)
+        }
+        TuiText("]", color = if (active) accent else TuiFaint, size = 10)
     }
 }

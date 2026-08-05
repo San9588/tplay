@@ -50,27 +50,50 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStop() {
+        super.onStop()
+        // App is closing/backgrounding: flush the recent-songs cache in one batch write.
+        vm.flushRecentSongs()
+    }
+
+    override fun onDestroy() {
+        vm.flushRecentSongs()
+        super.onDestroy()
+    }
 }
 
 @Composable
 private fun MediaPermissionGate(vm: MainViewModel) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        Manifest.permission.READ_MEDIA_AUDIO
-    } else {
-        Manifest.permission.READ_EXTERNAL_STORAGE
+    val permissions = buildList {
+        add(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                Manifest.permission.READ_MEDIA_AUDIO
+            } else {
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            },
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Without this the media notification never shows on Android 13+.
+            add(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
     val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) vm.refreshLibrary()
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        if (result[Manifest.permission.READ_MEDIA_AUDIO] == true ||
+            result[Manifest.permission.READ_EXTERNAL_STORAGE] == true
+        ) {
+            vm.refreshLibrary()
+        }
     }
     LaunchedEffect(Unit) {
-        val granted = ContextCompat.checkSelfPermission(
-            context,
-            permission,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) launcher.launch(permission) else vm.refreshLibrary()
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) launcher.launch(missing.toTypedArray())
+        else vm.refreshLibrary()
     }
     RootScreen(vm)
 }

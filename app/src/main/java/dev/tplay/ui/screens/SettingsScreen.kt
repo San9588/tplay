@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.tplay.data.model.YtQuality
 import dev.tplay.ui.MainViewModel
 import dev.tplay.ui.components.AsciiBox
 import dev.tplay.ui.components.SelectableRow
@@ -59,6 +60,35 @@ fun SettingsScreen(vm: MainViewModel) {
                         )
                     }
                 }
+            }
+        }
+
+        Spacer(Modifier.padding(4.dp))
+
+        AsciiBox(title = " YT QUALITY ") {
+            Column {
+                TuiText("wifi   max quality", color = TuiFg)
+                Row {
+                    YtQuality.entries.forEach { q ->
+                        TuiIconButton(
+                            label = if (settings.wifiQuality == q.name) "[${q.label}]" else q.label,
+                            onClick = { vm.setWifiQuality(q) },
+                            accent = settings.wifiQuality == q.name,
+                        )
+                    }
+                }
+                Spacer(Modifier.padding(3.dp))
+                TuiText("mobile max quality", color = TuiFg)
+                Row {
+                    YtQuality.entries.forEach { q ->
+                        TuiIconButton(
+                            label = if (settings.mobileQuality == q.name) "[${q.label}]" else q.label,
+                            onClick = { vm.setMobileQuality(q) },
+                            accent = settings.mobileQuality == q.name,
+                        )
+                    }
+                }
+                TuiText("falls back down, then up if missing", color = TuiFaint, size = 9)
             }
         }
 

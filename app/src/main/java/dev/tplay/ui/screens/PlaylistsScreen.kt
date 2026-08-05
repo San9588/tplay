@@ -31,6 +31,7 @@ import dev.tplay.ui.components.TuiText
 import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFaint
 import dev.tplay.ui.theme.TuiFg
+import kotlinx.coroutines.flow.map
 
 @Composable
 fun PlaylistsScreen(vm: MainViewModel) {
@@ -117,7 +118,8 @@ private fun PlaylistDetail(vm: MainViewModel, playlistId: Long) {
         loaded = true
     }
 
-    val nowPlayingId = vm.playerState.value.currentSong?.id
+    val nowPlayingId by remember { vm.playerState.map { it.currentSong?.id } }
+        .collectAsState(initial = null)
 
     Column(Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
         AsciiBox(title = " PLAYLIST ") {
@@ -155,7 +157,7 @@ private fun PlaylistDetail(vm: MainViewModel, playlistId: Long) {
                 SelectableRow(
                     text = song.title,
                     selected = song.id == nowPlayingId,
-                    onClick = { vm.playPlaylist(playlistId) },
+                    onClick = { vm.playPlaylist(playlistId, index) },
                     meta = formatTime(song.durationMs),
                 )
             }

@@ -7,7 +7,7 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import dev.tplay.TermPlayApp
 import dev.tplay.data.youtube.OkHttpDownloader
 
 class PlayerService : MediaSessionService() {
@@ -52,7 +53,12 @@ class PlayerService : MediaSessionService() {
         val session = MediaSession.Builder(this, player).build()
         mediaSession = session
         setMediaNotificationProvider(
-            DefaultMediaNotificationProvider.Builder(this).build(),
+            DefaultMediaNotificationProvider.Builder(this)
+                // Media3 re-posts the notification on every playback-state change; the
+                // default 1s debounce can exceed the system ~5/s enqueue rate when a
+                // queue of streams fails quickly, and the system sheds the notification.
+                .setNotificationTimeoutMs(2_000)
+                .build(),
         )
     }
 
@@ -81,8 +87,9 @@ class PlayerService : MediaSessionService() {
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
         // YouTube (googlevideo) streams frequently reject requests that don't carry a
         // browser-like User-Agent / Referer, so route media through an HTTP factory that
-        // sends them on every request.
-        val httpFactory = DefaultHttpDataSource.Factory()
+        // sends them on every request. OkHttpDataSource reuses the same OkHttp client as
+        // NewPipeExtractor (same UA, connection pool, TLS config) for consistent behavior.
+        val httpFactory = OkHttpDataSource.Factory((application as TermPlayApp).container.okHttp)
             .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(
                 mapOf(
