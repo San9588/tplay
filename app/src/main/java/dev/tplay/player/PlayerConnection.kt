@@ -63,11 +63,17 @@ class PlayerConnection(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var controller: MediaController? = null
     private var sleepJob: Job? = null
+    private var tickerJob: Job? = null
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
-    private val listener = object : Player.Listener {
+    private val listener = object : MediaController.Listener {
+        override fun onConnected(controller: MediaController) {
+            sync(controller)
+            startTicker(controller)
+        }
+
         override fun onEvents(player: Player, events: Player.Events) {
             sync(player)
         }
@@ -86,13 +92,21 @@ class PlayerConnection(private val context: Context) {
             }.getOrNull() ?: return@launch
             controller = c
             c.addListener(listener)
-            sync(c)
-            scope.launch(Dispatchers.Main) { positionTicker(c) }
+            if (c.isConnected) {
+                sync(c)
+                startTicker(c)
+            }
         }
+    }
+
+    private fun startTicker(c: MediaController) {
+        if (tickerJob?.isActive == true) return
+        tickerJob = scope.launch(Dispatchers.Main) { positionTicker(c) }
     }
 
     private suspend fun positionTicker(c: MediaController) {
         while (scope.isActive) {
+            if (!c.isConnected) break
             if (c.isPlaying) {
                 _state.update {
                     it.copy(positionMs = c.currentPosition, durationMs = c.duration.coerceAtLeast(0))
@@ -120,6 +134,7 @@ class PlayerConnection(private val context: Context) {
     private var sleepUntilEpochMs: Long? = null
 
     private fun sync(player: Player) {
+        if (player is MediaController && !player.isConnected) return
         val count = player.mediaItemCount
         val queue = (0 until count).mapNotNull { idx ->
             player.getMediaItemAt(idx).localConfiguration?.tag as? Song
