@@ -76,7 +76,8 @@ class YouTubeRepository(
         }
     }
 
-    // Try direct audio streams first, then fall back to muxed video+audio (audio track only).
+    // Try direct audio streams first, then fall back to the smallest muxed video+audio stream
+    // (the app only ever plays the audio track).
     private fun resolveStreamUrl(extractor: StreamExtractor): String {
         runCatching { extractor.audioStreams }.getOrNull().orEmpty().let { streams ->
             if (streams.isNotEmpty()) {
@@ -90,11 +91,12 @@ class YouTubeRepository(
             }
         }
         runCatching { extractor.videoStreams }.getOrNull().orEmpty().let { streams ->
-            if (streams.isNotEmpty()) {
-                val muxed = streams.maxByOrNull { it.bitrate }
-                if (muxed != null) {
-                    streamUrlOf(muxed)?.let { return it }
-                }
+            val muxed = streams
+                .filter { it.isVideoOnly.not() }
+                .minByOrNull { it.bitrate }
+                ?: streams.minByOrNull { it.bitrate }
+            if (muxed != null) {
+                streamUrlOf(muxed)?.let { return it }
             }
         }
         return ""

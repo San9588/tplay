@@ -3,6 +3,8 @@ package dev.tplay.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -26,7 +28,7 @@ import dev.tplay.ui.MainViewModel
 import dev.tplay.ui.components.AsciiBox
 import dev.tplay.ui.components.BlinkingCursor
 import dev.tplay.ui.components.TuiIconButton
-import dev.tplay.ui.components.TuiProgressBar
+import dev.tplay.ui.components.TuiSeekBar
 import dev.tplay.ui.components.TuiText
 import dev.tplay.ui.theme.LocalTuiAccent
 import dev.tplay.ui.theme.LocalTuiGreen
@@ -34,6 +36,7 @@ import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFg
 import dev.tplay.ui.theme.TuiFaint
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlayerScreen(vm: MainViewModel) {
     val st by vm.playerState.collectAsState()
@@ -50,11 +53,9 @@ fun PlayerScreen(vm: MainViewModel) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(top = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            Modifier.fillMaxWidth().padding(top = 10.dp),
+            horizontalArrangement = Arrangement.Center,
         ) {
-            TuiIconButton("[x]", onClick = { vm.closePlayer() })
-            Spacer(Modifier.weight(1f))
             TuiText("NOW PLAYING", color = TuiDim, size = 10)
         }
 
@@ -65,7 +66,7 @@ fun PlayerScreen(vm: MainViewModel) {
             return@Column
         }
 
-        Spacer(Modifier.padding(8.dp))
+        Spacer(Modifier.padding(6.dp))
 
         AsciiCover(
             cover = cover,
@@ -98,12 +99,15 @@ fun PlayerScreen(vm: MainViewModel) {
             TuiText("resolving stream...", color = green, size = 11)
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             TuiText(formatTime(st.positionMs), color = TuiDim, size = 10)
             Spacer(Modifier.padding(4.dp))
-            TuiProgressBar(
-                st.progress,
-                width = 26,
+            TuiSeekBar(
+                progress = st.progress,
+                modifier = Modifier.weight(1f),
                 onSeek = { fraction ->
                     vm.seekTo((fraction * st.durationMs).toLong())
                 },
@@ -130,32 +134,42 @@ fun PlayerScreen(vm: MainViewModel) {
 
         Spacer(Modifier.padding(8.dp))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             val repeatLabel = when (st.repeatMode) {
                 1 -> "RPT:A"
                 2 -> "RPT:1"
                 else -> "RPT:0"
             }
             TuiIconButton(repeatLabel, onClick = { vm.cycleRepeat() }, accent = st.repeatMode != 0)
-            Spacer(Modifier.padding(4.dp))
             TuiIconButton(
                 if (st.shuffleEnabled) "SHUF:ON" else "SHUF:OFF",
                 onClick = { vm.toggleShuffle() },
                 accent = st.shuffleEnabled,
             )
-            Spacer(Modifier.padding(4.dp))
             TuiIconButton(
-                if (vm.showLyrics) "LYR:ON" else "LYR:OFF",
-                onClick = { vm.toggleLyricsPanel() },
+                "LYRICS",
+                onClick = { vm.showLyricsPanel() },
                 accent = vm.showLyrics,
             )
-            Spacer(Modifier.padding(4.dp))
             TuiIconButton(
                 "QUEUE",
                 onClick = { vm.showQueuePanel() },
                 accent = !vm.showLyrics,
             )
-            Spacer(Modifier.padding(4.dp))
+            TuiIconButton(
+                if (vm.hapticBassEnabled) "VBASS:ON" else "VBASS:OFF",
+                onClick = { vm.toggleHapticBass() },
+                accent = vm.hapticBassEnabled,
+            )
+            TuiIconButton(
+                "VSTEP:${vm.hapticBassStep}",
+                onClick = { vm.cycleHapticStep() },
+                accent = vm.hapticBassEnabled,
+            )
             if (st.sleepRemainingMs > 0) {
                 TuiText("Zz ${st.sleepRemainingMs / 60_000}m", color = green, size = 10)
             }
@@ -183,12 +197,16 @@ private fun QueueNext(
     currentIndex: Int,
     accent: androidx.compose.ui.graphics.Color,
 ) {
-    val nextSong = queue.getOrNull(currentIndex + 1)
-    if (nextSong != null) {
-        TuiText("> ${nextSong.title}", color = accent, size = 11)
-        TuiText("  ${nextSong.artist}", color = TuiFaint, size = 10)
-    } else {
-        TuiText("end of queue", color = TuiFaint, size = 11)
+    Column(Modifier.fillMaxWidth().heightIn(min = 240.dp, max = 520.dp)) {
+        val nextSongs = queue.drop(currentIndex + 1).take(8)
+        if (nextSongs.isEmpty()) {
+            TuiText("end of queue", color = TuiFaint, size = 11)
+        } else {
+            nextSongs.forEachIndexed { i, s ->
+                TuiText("${i + 1}. ${s.title}", color = if (i == 0) accent else TuiFg, size = 11)
+                TuiText("   ${s.artist}", color = TuiFaint, size = 10)
+            }
+        }
     }
 }
 
@@ -213,7 +231,12 @@ private fun LyricsPanel(
         SyncedLyrics(lyrics, positionMs, accent, green)
     } else {
         val lines = lyrics.lines
-        Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 240.dp, max = 520.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
             lines.forEach { line ->
                 TuiText(line.text, color = TuiFg, size = 11)
             }
@@ -231,7 +254,12 @@ private fun SyncedLyrics(
     val idx = lyrics.currentIndex(positionMs)
     val start = (idx - 2).coerceAtLeast(0)
     val end = (idx + 8).coerceAtMost(lyrics.lines.size)
-    Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 240.dp, max = 520.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
         if (idx < 0) {
             TuiText("...", color = TuiFaint, size = 11)
         }

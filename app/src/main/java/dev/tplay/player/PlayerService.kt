@@ -7,6 +7,7 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -14,6 +15,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import dev.tplay.data.youtube.OkHttpDownloader
 
 class PlayerService : MediaSessionService() {
 
@@ -21,11 +23,17 @@ class PlayerService : MediaSessionService() {
 
     companion object {
         private const val TAG = "tplay-player"
+
+        // Exposed to PlayerConnection/HapticBass; ExoPlayer's audio session id is not
+        // available on the media3 1.4.1 Player interface, so it is allocated in-process.
+        @Volatile
+        var audioSessionId: Int = 0
     }
 
     override fun onCreate() {
         super.onCreate()
         val player = buildPlayer(this)
+        audioSessionId = player.audioSessionId
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 Log.e(TAG, "player error: ${error.errorCodeName} ${error.message}", error)
@@ -34,6 +42,10 @@ class PlayerService : MediaSessionService() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_IDLE) {
                     player.playerError?.let { Log.e(TAG, "player idle: ${it.errorCodeName} ${it.message}") }
+                }
+                if (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING) {
+                    val id = player.audioSessionId
+                    if (id != 0 && id != audioSessionId) audioSessionId = id
                 }
             }
         })
@@ -67,9 +79,22 @@ class PlayerService : MediaSessionService() {
             .build()
         val renderersFactory = DefaultRenderersFactory(context)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+        // YouTube (googlevideo) streams frequently reject requests that don't carry a
+        // browser-like User-Agent / Referer, so route media through an HTTP factory that
+        // sends them on every request.
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(
+                mapOf(
+                    "User-Agent" to OkHttpDownloader.USER_AGENT,
+                    "Referer" to "https://www.youtube.com/",
+                ),
+            )
         val player = ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(context))
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(context).setDataSourceFactory(httpFactory),
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)

@@ -11,8 +11,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -23,10 +28,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.tplay.ui.theme.LocalTuiAccent
@@ -36,6 +43,8 @@ import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFg
 import dev.tplay.ui.theme.TuiFaint
 import dev.tplay.ui.theme.TuiPanel
+import dev.tplay.ui.theme.TuiSeekFill
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 @Composable
@@ -101,41 +110,57 @@ fun TuiIconButton(
 }
 
 @Composable
-fun TuiProgressBar(
+fun TuiSeekBar(
     progress: Float,
     modifier: Modifier = Modifier,
-    width: Int = 28,
     onSeek: ((Float) -> Unit)? = null,
 ) {
-    val filled = (progress.coerceIn(0f, 1f) * width).toInt()
-    val bar = "\u2588".repeat(filled) + "\u00B7".repeat(width - filled)
-    val text = "[$bar]"
-    if (onSeek == null) {
-        Text(
-            text,
-            modifier = modifier,
-            color = TuiFg,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-        )
-    } else {
-        var barWidthPx by remember { mutableIntStateOf(1) }
-        Box(
-            modifier = modifier
-                .onSizeChanged { barWidthPx = it.width.coerceAtLeast(1) }
-                .pointerInput(barWidthPx) {
-                    detectTapGestures { offset ->
-                        onSeek((offset.x / barWidthPx).coerceIn(0f, 1f))
+    val accent = TuiSeekFill
+    var widthPx by remember { mutableIntStateOf(1) }
+    val fraction = progress.coerceIn(0f, 1f)
+    Box(
+        modifier = modifier
+            .height(18.dp)
+            .onSizeChanged { widthPx = it.width.coerceAtLeast(1) }
+            .then(
+                if (onSeek != null) {
+                    Modifier.pointerInput(widthPx) {
+                        detectTapGestures { offset ->
+                            onSeek((offset.x / widthPx).coerceIn(0f, 1f))
+                        }
                     }
+                } else {
+                    Modifier
                 },
-        ) {
-            Text(
-                text,
-                color = TuiFg,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-            )
-        }
+            ),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(5.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(TuiDim.copy(alpha = 0.35f)),
+        )
+        Box(
+            Modifier
+                .fillMaxWidth(fraction)
+                .height(5.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(accent),
+        )
+        Box(
+            Modifier
+                .offset {
+                    IntOffset(
+                        ((fraction * widthPx) - 6.dp.toPx()).roundToInt().coerceAtLeast(0),
+                        0,
+                    )
+                }
+                .size(12.dp)
+                .clip(CircleShape)
+                .background(accent),
+        )
     }
 }
 
@@ -152,9 +177,9 @@ fun BlinkingCursor(
             delay(530)
         }
     }
-    if (on) {
-        TuiText("_", modifier = modifier, color = color, size = size)
-    }
+    // Always occupy the same width (non-breaking space when off) so the surrounding
+    // title/layout does not shift while the cursor blinks.
+    TuiText(if (on) "_" else "\u00A0", modifier = modifier, color = color, size = size)
 }
 
 @Composable

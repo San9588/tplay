@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 
 class AppContainer(context: Context) {
 
-    private val appContext = context.applicationContext
+    val appContext: Context = context.applicationContext
 
     val okHttp: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)

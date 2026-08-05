@@ -98,6 +98,12 @@ class MainViewModel(
     var currentPlaylistId by mutableStateOf<Long?>(null)
         private set
 
+    // haptic bass (vbass / vstep)
+    var hapticBassEnabled by mutableStateOf(false)
+        private set
+    var hapticBassStep by mutableStateOf(2)
+        private set
+
     // cover
     var asciiCover by mutableStateOf<ImageBitmap?>(null)
         private set
@@ -164,7 +170,6 @@ class MainViewModel(
         val songs = localSongs
         if (songs.isEmpty()) return
         player?.playQueue(songs.map { it }, index)
-        showPlayer = true
     }
 
     // ---- youtube ----
@@ -302,6 +307,23 @@ class MainViewModel(
 
     fun startSleep(minutes: Int) = player?.startSleepTimer(minutes)
     fun cancelSleep() = player?.cancelSleepTimer()
+
+    // ---- haptic bass ----
+
+    fun toggleHapticBass() {
+        hapticBassEnabled = !hapticBassEnabled
+        if (hapticBassEnabled) {
+            val pc = player ?: return
+            dev.tplay.player.HapticBass.start(container.appContext, pc.audioSessionId(), hapticBassStep)
+        } else {
+            dev.tplay.player.HapticBass.stop()
+        }
+    }
+
+    fun cycleHapticStep() {
+        hapticBassStep = if (hapticBassStep >= 4) 1 else hapticBassStep + 1
+        dev.tplay.player.HapticBass.setStep(hapticBassStep)
+    }
 
     // ---- settings ----
 

@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,7 @@ import dev.tplay.ui.theme.TuiBg
 import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFg
 import dev.tplay.ui.theme.TuiFaint
+import kotlinx.coroutines.flow.map
 
 @Composable
 fun YouTubeScreen(vm: MainViewModel) {
@@ -45,7 +47,7 @@ fun YouTubeScreen(vm: MainViewModel) {
     val loading = vm.searchLoading
     val resolving = vm.resolvingId
     val youtubeError = vm.youtubeError
-    val nowPlayingId = vm.playerState.value.currentSong?.id
+    val nowPlayingId by vm.playerState.map { it.currentSong?.id }.collectAsState(initial = null)
     val green = LocalTuiGreen.current
     val accent = LocalTuiAccent.current
 

@@ -43,8 +43,6 @@ private val tabLabels = mapOf(
 
 @Composable
 fun RootScreen(vm: MainViewModel) {
-    val st by vm.playerState.collectAsState()
-
     BackHandler(enabled = vm.showPlayer) {
         vm.closePlayer()
     }
@@ -69,18 +67,8 @@ fun RootScreen(vm: MainViewModel) {
             }
         }
 
-        val current = st.currentSong
-        if (current != null && !vm.showPlayer) {
-            MiniPlayer(
-                title = current.title,
-                artist = current.artist,
-                duration = st.durationMs,
-                position = st.positionMs,
-                isPlaying = st.isPlaying,
-                onOpen = { vm.openPlayer() },
-                onToggle = { vm.toggle() },
-                onNext = { vm.next() },
-            )
+        if (!vm.showPlayer) {
+            MiniPlayer(vm = vm, onOpen = { vm.openPlayer() })
         }
 
         TabBar(
@@ -92,20 +80,14 @@ fun RootScreen(vm: MainViewModel) {
 
 @Composable
 private fun MiniPlayer(
-    title: String,
-    artist: String,
-    duration: Long,
-    position: Long,
-    isPlaying: Boolean,
+    vm: MainViewModel,
     onOpen: () -> Unit,
-    onToggle: () -> Unit,
-    onNext: () -> Unit,
 ) {
+    // Collect state only here so the 500ms position ticker recomposes this tiny bar
+    // instead of the whole screen tree (fixes list lag while a song is playing).
+    val st by vm.playerState.collectAsState()
+    val song = st.currentSong ?: return
     val accent = LocalTuiAccent.current
-    val progress = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
-    val barWidth = 12
-    val filled = (progress * barWidth).toInt()
-    val bar = "\u2588".repeat(filled) + "\u00B7".repeat(barWidth - filled)
 
     Column(Modifier.fillMaxWidth().background(TuiPanel)) {
         Box(
@@ -118,29 +100,27 @@ private fun MiniPlayer(
             Modifier
                 .fillMaxWidth()
                 .clickable { onOpen() }
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+                .padding(horizontal = 8.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TuiText(title, color = TuiFg, size = 12)
-                        BlinkingCursor(color = accent, size = 12)
-                    }
-                    TuiText(artist, color = TuiDim, size = 10)
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TuiText(song.title, color = TuiFg, size = 12)
+                    BlinkingCursor(color = accent, size = 12)
                 }
+                TuiText(song.artist, color = TuiDim, size = 9)
             }
-            TuiText("[$bar]", color = TuiDim, size = 10)
-            Spacer(Modifier.padding(6.dp))
+            TuiText(formatTime(st.positionMs), color = TuiFaint, size = 9)
+            Spacer(Modifier.padding(4.dp))
             TuiText(
-                if (isPlaying) "||" else ">",
-                modifier = Modifier.padding(horizontal = 4.dp).clickable { onToggle() },
+                if (st.isPlaying) "||" else ">",
+                modifier = Modifier.padding(horizontal = 4.dp).clickable { vm.toggle() },
                 color = accent,
                 size = 13,
             )
             TuiText(
                 ">>|",
-                modifier = Modifier.padding(horizontal = 6.dp).clickable { onNext() },
+                modifier = Modifier.padding(horizontal = 6.dp).clickable { vm.next() },
                 color = TuiFg,
                 size = 13,
             )

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 data class PlayerUiState(
@@ -66,9 +67,16 @@ class PlayerConnection(private val context: Context) {
     private var sleepJob: Job? = null
     private var tickerJob: Job? = null
 
+    @Volatile
+    private var hapticBassEnabled = false
+
+    @Volatile
+    private var hapticBassStep = 2
+
     // MediaItem.tag is dropped when items cross the MediaSession binder, so keep our own
     // mediaId -> Song registry to rebuild the UI queue/currentSong in sync().
-    private val queueById = mutableMapOf<String, Song>()
+    // Thread-safe: player callbacks can arrive on a non-main thread.
+    private val queueById = ConcurrentHashMap<String, Song>()
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -85,16 +93,24 @@ class PlayerConnection(private val context: Context) {
                 context,
                 ComponentName(context, PlayerService::class.java),
             )
-            val c = runCatching {
-                MediaController.Builder(context, token)
-                    .buildAsync()
-                    .get(4, TimeUnit.SECONDS)
-            }.getOrNull() ?: return@launch
+            var attempts = 0
+            var c: MediaController? = null
+            while (attempts < 3 && !scope.isActive) {
+                attempts++
+                c = runCatching {
+                    MediaController.Builder(context, token)
+                        .buildAsync()
+                        .get(4, TimeUnit.SECONDS)
+                }.getOrNull()
+                if (c != null) break
+                delay(1500)
+            }
+            val controller = c ?: return@launch
             withContext(Dispatchers.Main) {
-                controller = c
-                c.addListener(listener)
-                sync(c)
-                startTicker(c)
+                this@PlayerConnection.controller = controller
+                controller.addListener(listener)
+                runCatching { sync(controller) }
+                startTicker(controller)
             }
         }
     }
@@ -134,27 +150,31 @@ class PlayerConnection(private val context: Context) {
 
     private fun sync(player: Player) {
         if (player is MediaController && !player.isConnected) return
-        val count = player.mediaItemCount
-        val queue = (0 until count).mapNotNull { idx ->
-            val item = player.getMediaItemAt(idx)
-            queueById[item.mediaId] ?: Song.fromMediaItem(item, item.mediaMetadata.durationMs ?: 0L)
-        }
-        val current = player.currentMediaItem?.let { item ->
-            queueById[item.mediaId] ?: Song.fromMediaItem(item, player.duration.coerceAtLeast(0))
-        }
-        _state.update {
-            it.copy(
-                queue = queue,
-                currentIndex = player.currentMediaItemIndex,
-                currentSong = current,
-                isPlaying = player.isPlaying,
-                isBuffering = player.playbackState == Player.STATE_BUFFERING,
-                positionMs = player.currentPosition,
-                durationMs = player.duration.coerceAtLeast(0),
-                repeatMode = player.repeatMode,
-                shuffleEnabled = player.shuffleModeEnabled,
-                speed = player.playbackParameters.speed,
-            )
+        runCatching {
+            val count = player.mediaItemCount
+            val queue = (0 until count).mapNotNull { idx ->
+                val item = player.getMediaItemAt(idx)
+                queueById[item.mediaId] ?: Song.fromMediaItem(item, item.mediaMetadata.durationMs ?: 0L)
+            }
+            val current = player.currentMediaItem?.let { item ->
+                queueById[item.mediaId] ?: Song.fromMediaItem(item, player.duration.coerceAtLeast(0))
+            }
+            _state.update {
+                it.copy(
+                    queue = queue,
+                    currentIndex = player.currentMediaItemIndex,
+                    currentSong = current,
+                    isPlaying = player.isPlaying,
+                    isBuffering = player.playbackState == Player.STATE_BUFFERING,
+                    positionMs = player.currentPosition,
+                    durationMs = player.duration.coerceAtLeast(0),
+                    repeatMode = player.repeatMode,
+                    shuffleEnabled = player.shuffleModeEnabled,
+                    speed = player.playbackParameters.speed,
+                )
+            }
+        }.onFailure { e ->
+            android.util.Log.e("tplay-player", "sync failed", e)
         }
     }
 
@@ -259,6 +279,27 @@ class PlayerConnection(private val context: Context) {
     fun setLoading(loading: Boolean) {
         _state.update { it.copy(isLoading = loading) }
     }
+
+    // ---- haptic bass (vibrator follows low-frequency content) ----
+
+    fun audioSessionId(): Int = PlayerService.audioSessionId
+
+    fun toggleHapticBass() {
+        if (hapticBassEnabled) {
+            hapticBassEnabled = false
+            HapticBass.stop()
+        } else {
+            hapticBassEnabled = true
+            HapticBass.start(context, PlayerService.audioSessionId, hapticBassStep)
+        }
+    }
+
+    fun cycleHapticStep() {
+        hapticBassStep = (hapticBassStep % 4) + 1
+        HapticBass.setStep(hapticBassStep)
+    }
+
+    // ---- sleep timer ----
 
     fun startSleepTimer(minutes: Int) {
         sleepJob?.cancel()

@@ -10,6 +10,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -20,11 +22,13 @@ import dev.tplay.ui.components.SelectableRow
 import dev.tplay.ui.components.TuiText
 import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFaint
+import kotlinx.coroutines.flow.map
 
 @Composable
 fun LibraryScreen(vm: MainViewModel) {
     val songs = vm.localSongs
-    val nowPlayingId = vm.playerState.value.currentSong?.id
+    // Derived state: recompose only when the playing song changes, not on every position tick.
+    val nowPlayingId by vm.playerState.map { it.currentSong?.id }.collectAsState(initial = null)
 
     LaunchedEffect(Unit) {
         vm.refreshLibrary()
