@@ -47,7 +47,8 @@ fun YouTubeScreen(vm: MainViewModel) {
     val loading = vm.searchLoading
     val resolving = vm.resolvingId
     val youtubeError = vm.youtubeError
-    val nowPlayingId by vm.playerState.map { it.currentSong?.id }.collectAsState(initial = null)
+    val nowPlayingId by remember { vm.playerState.map { it.currentSong?.id } }
+        .collectAsState(initial = null)
     val green = LocalTuiGreen.current
     val accent = LocalTuiAccent.current
 

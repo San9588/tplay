@@ -95,7 +95,7 @@ class PlayerConnection(private val context: Context) {
             )
             var attempts = 0
             var c: MediaController? = null
-            while (attempts < 3 && !scope.isActive) {
+            while (attempts < 3 && scope.isActive) {
                 attempts++
                 c = runCatching {
                     MediaController.Builder(context, token)

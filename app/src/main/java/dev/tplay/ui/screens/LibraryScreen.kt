@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -28,7 +29,9 @@ import kotlinx.coroutines.flow.map
 fun LibraryScreen(vm: MainViewModel) {
     val songs = vm.localSongs
     // Derived state: recompose only when the playing song changes, not on every position tick.
-    val nowPlayingId by vm.playerState.map { it.currentSong?.id }.collectAsState(initial = null)
+    // remember() the flow so produceState isn't restarted on each recomposition.
+    val nowPlayingId by remember { vm.playerState.map { it.currentSong?.id } }
+        .collectAsState(initial = null)
 
     LaunchedEffect(Unit) {
         vm.refreshLibrary()
