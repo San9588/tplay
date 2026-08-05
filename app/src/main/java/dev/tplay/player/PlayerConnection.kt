@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 data class PlayerUiState(
@@ -68,12 +69,7 @@ class PlayerConnection(private val context: Context) {
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
-    private val listener = object : MediaController.Listener {
-        override fun onConnected(controller: MediaController) {
-            sync(controller)
-            startTicker(controller)
-        }
-
+    private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
             sync(player)
         }
@@ -90,9 +86,9 @@ class PlayerConnection(private val context: Context) {
                     .buildAsync()
                     .get(4, TimeUnit.SECONDS)
             }.getOrNull() ?: return@launch
-            controller = c
-            c.addListener(listener)
-            if (c.isConnected) {
+            withContext(Dispatchers.Main) {
+                controller = c
+                c.addListener(listener)
                 sync(c)
                 startTicker(c)
             }
@@ -106,8 +102,7 @@ class PlayerConnection(private val context: Context) {
 
     private suspend fun positionTicker(c: MediaController) {
         while (scope.isActive) {
-            if (!c.isConnected) break
-            if (c.isPlaying) {
+            if (c.isConnected && c.isPlaying) {
                 _state.update {
                     it.copy(positionMs = c.currentPosition, durationMs = c.duration.coerceAtLeast(0))
                 }
