@@ -21,7 +21,6 @@ import dev.tplay.ui.components.SelectableRow
 import dev.tplay.ui.components.TuiText
 import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFaint
-import dev.tplay.ui.theme.TuiGreen
 
 @Composable
 fun QueueScreen(vm: MainViewModel) {

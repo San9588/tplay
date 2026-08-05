@@ -23,14 +23,16 @@ import dev.tplay.ui.components.AsciiBox
 import dev.tplay.ui.components.SelectableRow
 import dev.tplay.ui.components.TuiIconButton
 import dev.tplay.ui.components.TuiText
+import dev.tplay.ui.theme.LocalTuiGreen
 import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFaint
 import dev.tplay.ui.theme.TuiFg
-import dev.tplay.ui.theme.TuiGreen
 
 @Composable
 fun SettingsScreen(vm: MainViewModel) {
+    val settings by vm.settings.collectAsState()
     val playerState by vm.playerState.collectAsState()
+    val green = LocalTuiGreen.current
 
     Column(
         Modifier
@@ -62,11 +64,33 @@ fun SettingsScreen(vm: MainViewModel) {
 
         Spacer(Modifier.padding(4.dp))
 
+        AsciiBox(title = " THEME ") {
+            Column {
+                TuiText("accent  [system]", color = TuiFg)
+                TuiText("system uses the android wallpaper accent colour", color = TuiFaint, size = 10)
+                Row {
+                    TuiIconButton(
+                        label = if (settings.systemAccent) "[system]" else "system",
+                        onClick = { vm.setSystemAccent(true) },
+                        accent = settings.systemAccent,
+                    )
+                    Spacer(Modifier.padding(4.dp))
+                    TuiIconButton(
+                        label = if (!settings.systemAccent) "[default]" else "default",
+                        onClick = { vm.setSystemAccent(false) },
+                        accent = !settings.systemAccent,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.padding(4.dp))
+
         AsciiBox(title = " SLEEP TIMER ") {
             val remaining = playerState.sleepRemainingMs
             Column {
                 if (remaining > 0) {
-                    TuiText("sleeping in ${remaining / 60_000} min", color = TuiGreen)
+                    TuiText("sleeping in ${remaining / 60_000} min", color = green)
                 }
                 Row {
                     listOf(15, 30, 60).forEach { m ->

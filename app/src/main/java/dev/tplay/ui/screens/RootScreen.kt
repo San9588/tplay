@@ -24,8 +24,9 @@ import androidx.compose.ui.unit.dp
 import dev.tplay.core.formatTime
 import dev.tplay.ui.MainViewModel
 import dev.tplay.ui.Tab
+import dev.tplay.ui.components.BlinkingCursor
 import dev.tplay.ui.components.TuiText
-import dev.tplay.ui.theme.TuiAccent
+import dev.tplay.ui.theme.LocalTuiAccent
 import dev.tplay.ui.theme.TuiBg
 import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFaint
@@ -100,6 +101,7 @@ private fun MiniPlayer(
     onToggle: () -> Unit,
     onNext: () -> Unit,
 ) {
+    val accent = LocalTuiAccent.current
     val progress = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
     val barWidth = 12
     val filled = (progress * barWidth).toInt()
@@ -109,7 +111,7 @@ private fun MiniPlayer(
         Box(
             Modifier
                 .fillMaxWidth()
-                .background(TuiAccent.copy(alpha = 0.6f))
+                .background(accent.copy(alpha = 0.6f))
                 .padding(1.dp),
         )
         Row(
@@ -119,16 +121,21 @@ private fun MiniPlayer(
                 .padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f)) {
-                TuiText(title, color = TuiFg, size = 12)
-                TuiText(artist, color = TuiDim, size = 10)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TuiText(title, color = TuiFg, size = 12)
+                        BlinkingCursor(color = accent, size = 12)
+                    }
+                    TuiText(artist, color = TuiDim, size = 10)
+                }
             }
             TuiText("[$bar]", color = TuiDim, size = 10)
             Spacer(Modifier.padding(6.dp))
             TuiText(
                 if (isPlaying) "||" else ">",
                 modifier = Modifier.padding(horizontal = 4.dp).clickable { onToggle() },
-                color = TuiAccent,
+                color = accent,
                 size = 13,
             )
             TuiText(
@@ -143,12 +150,13 @@ private fun MiniPlayer(
 
 @Composable
 private fun TabBar(current: Tab?, onSelect: (Tab) -> Unit) {
+    val accent = LocalTuiAccent.current
     Column(Modifier.fillMaxWidth().background(TuiPanel)) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(3.dp)
-                .background(TuiAccent),
+                .background(accent),
         )
         Row(
             Modifier
@@ -165,7 +173,7 @@ private fun TabBar(current: Tab?, onSelect: (Tab) -> Unit) {
                         .clickable { onSelect(tab) }
                         .background(if (selected) TuiPanel else Color.Transparent)
                         .padding(horizontal = 10.dp, vertical = 6.dp),
-                    color = if (selected) TuiAccent else TuiDim,
+                    color = if (selected) accent else TuiDim,
                     size = 11,
                 )
             }

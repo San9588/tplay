@@ -11,6 +11,7 @@ import dev.tplay.core.AppContainer
 import dev.tplay.data.local.PlaylistEntity
 import dev.tplay.data.local.PlaylistWithSongs
 import dev.tplay.data.local.SongJson
+import dev.tplay.data.lyrics.Lyrics
 import dev.tplay.data.model.Song
 import dev.tplay.data.model.SongSource
 import dev.tplay.player.PlayerConnection
@@ -86,6 +87,8 @@ class MainViewModel(
         private set
     var resolvingId by mutableStateOf<String?>(null)
         private set
+    var youtubeError by mutableStateOf<String?>(null)
+        private set
 
     // playlists
     val playlists: StateFlow<List<PlaylistEntity>> = container.database.playlistDao()
@@ -103,12 +106,26 @@ class MainViewModel(
 
     private var lastCoverSongId: String? = null
 
+    // lyrics
+    var lyrics by mutableStateOf<Lyrics?>(null)
+        private set
+    var lyricsLoading by mutableStateOf(false)
+        private set
+    var showLyrics by mutableStateOf(false)
+        private set
+
+    private var lastLyricsSongId: String? = null
+
     init {
         viewModelScope.launch {
             playerState.collect { st ->
                 if (st.currentSong?.id != lastCoverSongId) {
                     lastCoverSongId = st.currentSong?.id
                     loadCover(st.currentSong)
+                }
+                if (st.currentSong?.id != lastLyricsSongId) {
+                    lastLyricsSongId = st.currentSong?.id
+                    loadLyrics(st.currentSong)
                 }
             }
         }
@@ -168,13 +185,15 @@ class MainViewModel(
 
     fun playYoutube(song: Song) {
         val id = song.videoId ?: return
+        youtubeError = null
         viewModelScope.launch {
             resolvingId = id
             player?.setLoading(true)
             runCatching {
                 val resolved = container.youtubeRepository.resolveVideo(id)
                 player?.playSong(resolved)
-            }.onFailure {
+            }.onFailure { e ->
+                youtubeError = e.message ?: "failed to resolve stream"
                 resolvingId = null
                 player?.setLoading(false)
             }
@@ -187,12 +206,18 @@ class MainViewModel(
     fun playYoutubeQueue(index: Int) {
         val songs = searchResults
         if (songs.isEmpty()) return
+        youtubeError = null
         viewModelScope.launch {
             player?.setLoading(true)
-            val resolved = container.youtubeRepository.resolveQueue(songs)
+            runCatching {
+                val resolved = container.youtubeRepository.resolveQueue(songs)
+                player?.playQueue(resolved, index)
+            }.onFailure { e ->
+                youtubeError = e.message ?: "failed to resolve queue"
+            }.onSuccess {
+                showPlayer = true
+            }
             player?.setLoading(false)
-            player?.playQueue(resolved, index)
-            showPlayer = true
         }
     }
 
@@ -277,6 +302,41 @@ class MainViewModel(
 
     fun startSleep(minutes: Int) = player?.startSleepTimer(minutes)
     fun cancelSleep() = player?.cancelSleepTimer()
+
+    // ---- settings ----
+
+    fun setSystemAccent(enabled: Boolean) {
+        viewModelScope.launch {
+            container.settingsStore.setSystemAccent(enabled)
+        }
+    }
+
+    // ---- lyrics ----
+
+    fun toggleLyricsPanel() {
+        showLyrics = !showLyrics
+    }
+
+    fun showLyricsPanel() {
+        showLyrics = true
+    }
+
+    fun showQueuePanel() {
+        showLyrics = false
+    }
+
+    private fun loadLyrics(song: Song?) {
+        lyricsLoading = true
+        lyrics = null
+        if (song == null) {
+            lyricsLoading = false
+            return
+        }
+        viewModelScope.launch {
+            lyrics = container.lyricsRepository.load(song)
+            lyricsLoading = false
+        }
+    }
 
     // ---- cover ----
 

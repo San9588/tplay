@@ -19,6 +19,7 @@ data class Settings(
     val playbackSpeed: Float = 1f,
     val bufferMs: Int = 50_000,
     val accent: String = "orange",
+    val systemAccent: Boolean = false,
 )
 
 class SettingsStore(private val context: Context) {
@@ -29,6 +30,7 @@ class SettingsStore(private val context: Context) {
         val SPEED = doublePreferencesKey("speed")
         val BUFFER = intPreferencesKey("buffer")
         val ACCENT = androidx.datastore.preferences.core.stringPreferencesKey("accent")
+        val SYSTEM_ACCENT = booleanPreferencesKey("system_accent")
     }
 
     val settings: Flow<Settings> = context.dataStore.data.map { prefs ->
@@ -38,6 +40,7 @@ class SettingsStore(private val context: Context) {
             playbackSpeed = (prefs[Keys.SPEED] ?: 1.0).toFloat(),
             bufferMs = prefs[Keys.BUFFER] ?: 50_000,
             accent = prefs[Keys.ACCENT] ?: "orange",
+            systemAccent = prefs[Keys.SYSTEM_ACCENT] ?: false,
         )
     }
 
@@ -59,5 +62,9 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setAccent(name: String) = context.dataStore.edit {
         it[Keys.ACCENT] = name
+    }
+
+    suspend fun setSystemAccent(enabled: Boolean) = context.dataStore.edit {
+        it[Keys.SYSTEM_ACCENT] = enabled
     }
 }

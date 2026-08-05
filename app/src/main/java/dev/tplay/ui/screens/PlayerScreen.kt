@@ -1,6 +1,5 @@
 package dev.tplay.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,8 +8,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -19,29 +18,29 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.tplay.core.AsciiCover
 import dev.tplay.core.formatTime
+import dev.tplay.data.lyrics.Lyrics
 import dev.tplay.ui.MainViewModel
 import dev.tplay.ui.components.AsciiBox
+import dev.tplay.ui.components.BlinkingCursor
 import dev.tplay.ui.components.TuiIconButton
 import dev.tplay.ui.components.TuiProgressBar
 import dev.tplay.ui.components.TuiText
-import dev.tplay.ui.theme.TuiAccent
-import dev.tplay.ui.theme.TuiBg
+import dev.tplay.ui.theme.LocalTuiAccent
+import dev.tplay.ui.theme.LocalTuiGreen
 import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFg
 import dev.tplay.ui.theme.TuiFaint
-import dev.tplay.ui.theme.TuiGreen
 
 @Composable
 fun PlayerScreen(vm: MainViewModel) {
     val st by vm.playerState.collectAsState()
     val cover = vm.asciiCover
     val song = st.currentSong
+    val accent = LocalTuiAccent.current
+    val green = LocalTuiGreen.current
 
     Column(
         Modifier
@@ -79,11 +78,14 @@ fun PlayerScreen(vm: MainViewModel) {
 
         Spacer(Modifier.padding(10.dp))
 
-        TuiText(
-            song.title,
-            color = TuiFg,
-            size = 14,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TuiText(
+                song.title,
+                color = TuiFg,
+                size = 14,
+            )
+            BlinkingCursor(color = accent, size = 14)
+        }
         TuiText(
             song.artist,
             color = TuiDim,
@@ -93,13 +95,19 @@ fun PlayerScreen(vm: MainViewModel) {
         Spacer(Modifier.padding(8.dp))
 
         if (st.isLoading) {
-            TuiText("resolving stream...", color = TuiGreen, size = 11)
+            TuiText("resolving stream...", color = green, size = 11)
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             TuiText(formatTime(st.positionMs), color = TuiDim, size = 10)
             Spacer(Modifier.padding(4.dp))
-            TuiProgressBar(st.progress, Modifier.width(140.dp))
+            TuiProgressBar(
+                st.progress,
+                width = 26,
+                onSeek = { fraction ->
+                    vm.seekTo((fraction * st.durationMs).toLong())
+                },
+            )
             Spacer(Modifier.padding(4.dp))
             TuiText(formatTime(st.durationMs), color = TuiDim, size = 10)
         }
@@ -136,23 +144,107 @@ fun PlayerScreen(vm: MainViewModel) {
                 accent = st.shuffleEnabled,
             )
             Spacer(Modifier.padding(4.dp))
+            TuiIconButton(
+                if (vm.showLyrics) "LYR:ON" else "LYR:OFF",
+                onClick = { vm.toggleLyricsPanel() },
+                accent = vm.showLyrics,
+            )
+            Spacer(Modifier.padding(4.dp))
+            TuiIconButton(
+                "QUEUE",
+                onClick = { vm.showQueuePanel() },
+                accent = !vm.showLyrics,
+            )
+            Spacer(Modifier.padding(4.dp))
             if (st.sleepRemainingMs > 0) {
-                TuiText("Zz ${st.sleepRemainingMs / 60_000}m", color = TuiGreen, size = 10)
+                TuiText("Zz ${st.sleepRemainingMs / 60_000}m", color = green, size = 10)
             }
         }
 
         Spacer(Modifier.padding(14.dp))
 
-        AsciiBox(title = " QUEUE NEXT ") {
-            val nextSong = st.queue.getOrNull(st.currentIndex + 1)
-            if (nextSong != null) {
-                TuiText("> ${nextSong.title}", color = TuiDim, size = 11)
-                TuiText("  ${nextSong.artist}", color = TuiFaint, size = 10)
-            } else {
-                TuiText("end of queue", color = TuiFaint, size = 11)
+        if (vm.showLyrics) {
+            AsciiBox(title = " LYRICS ") {
+                LyricsPanel(vm, st.positionMs, accent)
+            }
+        } else {
+            AsciiBox(title = " QUEUE NEXT ") {
+                QueueNext(st.queue, st.currentIndex, accent)
             }
         }
 
         Spacer(Modifier.padding(16.dp))
+    }
+}
+
+@Composable
+private fun QueueNext(
+    queue: List<dev.tplay.data.model.Song>,
+    currentIndex: Int,
+    accent: androidx.compose.ui.graphics.Color,
+) {
+    val nextSong = queue.getOrNull(currentIndex + 1)
+    if (nextSong != null) {
+        TuiText("> ${nextSong.title}", color = accent, size = 11)
+        TuiText("  ${nextSong.artist}", color = TuiFaint, size = 10)
+    } else {
+        TuiText("end of queue", color = TuiFaint, size = 11)
+    }
+}
+
+@Composable
+private fun LyricsPanel(
+    vm: MainViewModel,
+    positionMs: Long,
+    accent: androidx.compose.ui.graphics.Color,
+) {
+    val green = LocalTuiGreen.current
+    if (vm.lyricsLoading) {
+        TuiText("loading lyrics...", color = TuiDim, size = 11)
+        return
+    }
+    val lyrics = vm.lyrics
+    if (lyrics == null) {
+        TuiText("no lyrics found", color = TuiFaint, size = 11)
+        TuiText("place <title>.lrc next to the track", color = TuiFaint, size = 10)
+        return
+    }
+    if (lyrics.isSynced) {
+        SyncedLyrics(lyrics, positionMs, accent, green)
+    } else {
+        val lines = lyrics.lines
+        Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
+            lines.forEach { line ->
+                TuiText(line.text, color = TuiFg, size = 11)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncedLyrics(
+    lyrics: Lyrics,
+    positionMs: Long,
+    accent: androidx.compose.ui.graphics.Color,
+    green: androidx.compose.ui.graphics.Color,
+) {
+    val idx = lyrics.currentIndex(positionMs)
+    val start = (idx - 2).coerceAtLeast(0)
+    val end = (idx + 8).coerceAtMost(lyrics.lines.size)
+    Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
+        if (idx < 0) {
+            TuiText("...", color = TuiFaint, size = 11)
+        }
+        for (i in start until end) {
+            val line = lyrics.lines[i]
+            when {
+                i == idx -> TuiText("> ${line.text}", color = accent, size = 11)
+                i < idx -> TuiText("  ${line.text}", color = TuiFaint, size = 11)
+                else -> TuiText("  ${line.text}", color = TuiDim, size = 11)
+            }
+        }
+        if (end < lyrics.lines.size) {
+            TuiText("...", color = TuiFaint, size = 11)
+        }
     }
 }

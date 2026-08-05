@@ -1,5 +1,6 @@
 package dev.tplay.ui.theme
 
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 val TuiBg = Color(0xFF000000)
@@ -15,3 +16,6 @@ val TuiGreen = Color(0xFF7FA05F)
 val TuiRed = Color(0xFFB85C50)
 val TuiBlue = Color(0xFF5F87A0)
 val TuiCyan = Color(0xFF5FB3A0)
+
+val LocalTuiAccent = staticCompositionLocalOf { TuiAccent }
+val LocalTuiGreen = staticCompositionLocalOf { TuiGreen }

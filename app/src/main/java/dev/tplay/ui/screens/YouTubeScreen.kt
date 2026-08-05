@@ -31,11 +31,12 @@ import dev.tplay.ui.components.AsciiBox
 import dev.tplay.ui.components.SelectableRow
 import dev.tplay.ui.components.TuiIconButton
 import dev.tplay.ui.components.TuiText
+import dev.tplay.ui.theme.LocalTuiAccent
+import dev.tplay.ui.theme.LocalTuiGreen
 import dev.tplay.ui.theme.TuiBg
 import dev.tplay.ui.theme.TuiDim
 import dev.tplay.ui.theme.TuiFg
 import dev.tplay.ui.theme.TuiFaint
-import dev.tplay.ui.theme.TuiGreen
 
 @Composable
 fun YouTubeScreen(vm: MainViewModel) {
@@ -43,11 +44,15 @@ fun YouTubeScreen(vm: MainViewModel) {
     val results = vm.searchResults
     val loading = vm.searchLoading
     val resolving = vm.resolvingId
+    val youtubeError = vm.youtubeError
+    val nowPlayingId = vm.playerState.value.currentSong?.id
+    val green = LocalTuiGreen.current
+    val accent = LocalTuiAccent.current
 
     Column(Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
         AsciiBox(title = " YOUTUBE SEARCH ") {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TuiText("> ", color = TuiGreen)
+                TuiText("> ", color = green)
                 BasicTextField(
                     value = query,
                     onValueChange = { query = it; vm.updateSearchQuery(it) },
@@ -74,6 +79,12 @@ fun YouTubeScreen(vm: MainViewModel) {
         if (resolving != null) {
             Row(Modifier.padding(vertical = 4.dp)) {
                 TuiText("resolving stream...", color = TuiDim, size = 10)
+            }
+        }
+
+        if (youtubeError != null) {
+            Row(Modifier.padding(vertical = 4.dp)) {
+                TuiText("error: $youtubeError", color = accent, size = 10)
             }
         }
 
@@ -104,9 +115,10 @@ fun YouTubeScreen(vm: MainViewModel) {
             }
             items(results.size, key = { results[it].id }) { index ->
                 val song = results[index]
+                val isCurrent = song.id == nowPlayingId
                 SelectableRow(
                     text = song.title,
-                    selected = false,
+                    selected = isCurrent,
                     onClick = { vm.playYoutube(song) },
                     meta = formatTime(song.durationMs),
                 )
