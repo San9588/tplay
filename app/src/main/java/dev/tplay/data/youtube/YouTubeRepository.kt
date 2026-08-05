@@ -124,7 +124,7 @@ class YouTubeRepository(
             Parser.matchGroup1("v=([^&]*)", url).takeIf { it.isNotEmpty() }
         }.getOrNull() ?: url.hashCode().toString()
         onStage(YtStage.READY)
-        Song(
+        return Song(
             id = "yt:$videoId",
             title = extractor.name ?: "unknown",
             artist = extractor.uploaderName ?: "",
