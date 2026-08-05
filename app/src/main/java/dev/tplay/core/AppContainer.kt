@@ -22,11 +22,12 @@ class AppContainer(context: Context) {
         .build()
 
     val downloader = OkHttpDownloader(okHttp)
-    val youtubeRepository = YouTubeRepository(downloader)
-
-    val libraryRepository = LibraryRepository(appContext)
 
     val settingsStore = SettingsStore(appContext)
+
+    val youtubeRepository = YouTubeRepository(downloader, settingsStore, appContext)
+
+    val libraryRepository = LibraryRepository(appContext)
 
     val lyricsRepository = LyricsRepository(appContext)
 

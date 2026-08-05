@@ -17,8 +17,11 @@ import dev.tplay.data.local.SongJson
 import dev.tplay.data.lyrics.Lyrics
 import dev.tplay.data.model.Song
 import dev.tplay.data.model.SongSource
+import dev.tplay.data.model.YtQuality
+import dev.tplay.data.model.YtStage
 import dev.tplay.player.PlayerConnection
 import dev.tplay.player.PlayerUiState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -91,6 +94,10 @@ class MainViewModel(
     var resolvingId by mutableStateOf<String?>(null)
         private set
     var youtubeError by mutableStateOf<String?>(null)
+        private set
+
+    // live pipeline status shown as a single strip on the YouTube tab
+    var ytStage by mutableStateOf(YtStage.IDLE)
         private set
 
     // playlists
@@ -185,9 +192,25 @@ class MainViewModel(
                 } else if (err == null && youtubeError?.startsWith("playback") == true) {
                     youtubeError = null
                 }
+                // Live pipeline status for the YouTube tab strip.
+                if (st.isPlaying && st.currentSong?.source == SongSource.YOUTUBE) {
+                    ytStage = YtStage.PLAYING
+                } else if (ytStage == YtStage.PLAYING) {
+                    ytStage = if (st.currentSong?.source == SongSource.YOUTUBE) {
+                        YtStage.READY
+                    } else {
+                        YtStage.IDLE
+                    }
+                }
             }
         }
         refreshLibrary()
+    }
+
+    // Repository callbacks arrive on the IO dispatcher; hop to main before writing the
+    // compose state that drives the status strip.
+    private fun stageUpdater(): (YtStage) -> Unit = { s ->
+        viewModelScope.launch(Dispatchers.Main.immediate) { ytStage = s }
     }
 
     // ---- navigation ----
@@ -215,9 +238,15 @@ class MainViewModel(
                 .map { it.toSongJson().toSong() }
             if (recents.isNotEmpty()) {
                 searchResults = recents
+                ytStage = YtStage.READY
             } else {
-                val trending = runCatching { container.youtubeRepository.trendingIndia() }
-                    .onFailure { Log.e(TAG, "trending failed", it) }
+                val trending = runCatching {
+                    container.youtubeRepository.trendingIndia(onStage = stageUpdater())
+                }
+                    .onFailure {
+                        Log.e(TAG, "trending failed", it)
+                        ytStage = YtStage.IDLE
+                    }
                     .getOrDefault(emptyList())
                 searchResults = trending
                 if (trending.isEmpty()) youtubeError = "trending unavailable — try a search"
@@ -265,8 +294,11 @@ class MainViewModel(
         viewModelScope.launch {
             searchLoading = true
             youtubeError = null
-            val results = runCatching { container.youtubeRepository.search(q) }
-                .onFailure { Log.e(TAG, "search failed", it) }
+            val results = runCatching { container.youtubeRepository.search(q, onStage = stageUpdater()) }
+                .onFailure {
+                    Log.e(TAG, "search failed", it)
+                    ytStage = YtStage.IDLE
+                }
                 .getOrDefault(emptyList())
             searchResults = results
             if (results.isEmpty()) youtubeError = "search failed or no results"
@@ -281,11 +313,12 @@ class MainViewModel(
             resolvingId = id
             player?.setLoading(true)
             runCatching {
-                val resolved = container.youtubeRepository.resolveVideo(id)
+                val resolved = container.youtubeRepository.resolveVideo(id, onStage = stageUpdater())
                 recordRecent(resolved)
                 player?.playSong(resolved)
             }.onFailure { e ->
                 youtubeError = e.message ?: "failed to resolve stream"
+                ytStage = YtStage.IDLE
                 resolvingId = null
                 player?.setLoading(false)
             }
@@ -302,11 +335,12 @@ class MainViewModel(
         viewModelScope.launch {
             player?.setLoading(true)
             runCatching {
-                val resolved = container.youtubeRepository.resolveQueue(songs)
+                val resolved = container.youtubeRepository.resolveQueue(songs, onStage = stageUpdater())
                 resolved.forEach { recordRecent(it) }
                 player?.playQueue(resolved, index)
             }.onFailure { e ->
                 youtubeError = e.message ?: "failed to resolve queue"
+                ytStage = YtStage.IDLE
             }.onSuccess {
                 showPlayer = true
             }
@@ -423,6 +457,18 @@ class MainViewModel(
     fun setSystemAccent(enabled: Boolean) {
         viewModelScope.launch {
             container.settingsStore.setSystemAccent(enabled)
+        }
+    }
+
+    fun setWifiQuality(q: YtQuality) {
+        viewModelScope.launch {
+            container.settingsStore.setWifiQuality(q.name)
+        }
+    }
+
+    fun setMobileQuality(q: YtQuality) {
+        viewModelScope.launch {
+            container.settingsStore.setMobileQuality(q.name)
         }
     }
 
