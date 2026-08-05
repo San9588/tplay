@@ -12,8 +12,7 @@ Inspired by the look and feel of the DMT player (`imjyotiraditya/dmt`).
 ## features
 
 - **local library** — scans MediaStore for audio files (title/artist/album/duration)
-- **youtube search & streaming** — search, resolve the best audio stream, play it
-  (via NewPipeExtractor + Media3, no API keys)
+- **youtube search & streaming** — search YouTube Music (`music_songs` / `music_videos` filter with fallback) for official audio tracks, resolve the best audio stream, play it (via NewPipeExtractor + Media3, no API keys)
 - **ascii cover art** — album art (or YouTube thumbnail) is rendered as a
   colored ASCII grid with a light sweep while playing; tracks without art get a
   generated ASCII pattern
@@ -56,15 +55,13 @@ is signed with the debug key so it can be installed directly.
 
 - Kotlin, Jetpack Compose (Material3, custom TUI theme)
 - Media3 ExoPlayer + MediaSessionService (offline + streaming)
-- NewPipeExtractor v0.24.8 (YouTube search / stream extraction, via JitPack)
+- NewPipeExtractor v0.26.4 (YouTube Music search / stream extraction, via JitPack)
 - Room (playlists) · DataStore (settings) · OkHttp (extractor + artwork)
 
 ## optimizations
 
 ### playback / battery
-- **audio offload** enabled (`TrackSelectionParameters.AudioOffloadPreferences`,
-  `AUDIO_OFFLOAD_MODE_ENABLED`) so supported tracks decode on the DSP instead of
-  the CPU
+- **audio offload** disabled (`AUDIO_OFFLOAD_MODE_DISABLED`) so that `android.media.audiofx.Visualizer` can attach to the audio session for VBASS (haptic bass) FFT frequency inspection
 - tuned `DefaultLoadControl` (50 s min / 100 s max buffer, fast rebuffer resume)
 - `WAKE_MODE_LOCAL` — wakelock only while actively playing
 - `handleAudioBecomingNoisy` + audio-focus handling (pause on unplug/duck)

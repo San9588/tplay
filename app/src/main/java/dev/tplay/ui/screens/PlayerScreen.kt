@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.dp
 import dev.tplay.core.AsciiCover
 import dev.tplay.core.formatTime
+import dev.tplay.data.model.SongSource
 import dev.tplay.data.lyrics.Lyrics
 import dev.tplay.ui.MainViewModel
 import dev.tplay.ui.components.AsciiBox
@@ -87,16 +88,42 @@ fun PlayerScreen(vm: MainViewModel) {
             )
             BlinkingCursor(color = accent, size = 14)
         }
-        TuiText(
-            song.artist,
-            color = TuiDim,
-            size = 12,
-        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TuiText(
+                song.artist,
+                color = TuiDim,
+                size = 12,
+            )
+            TuiText(
+                "[ ${st.audioFormatInfo} ]",
+                color = accent,
+                size = 10,
+            )
+        }
 
-        Spacer(Modifier.padding(8.dp))
+        Spacer(Modifier.padding(6.dp))
 
-        if (st.isLoading) {
+        // Only display YouTube live pipeline status ([fetch_]/[parse_]/[ready_]/[playing_])
+        // on the music progress bar page when the song is streaming from YouTube (not local play).
+        if (song.source == SongSource.YOUTUBE) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SingleStageChip(vm.ytStage, accent)
+                if (st.isLoading) {
+                    TuiText("resolving stream...", color = green, size = 10)
+                }
+            }
+            Spacer(Modifier.padding(4.dp))
+        } else if (st.isLoading) {
             TuiText("resolving stream...", color = green, size = 11)
+            Spacer(Modifier.padding(4.dp))
         }
 
         Row(

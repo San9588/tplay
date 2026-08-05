@@ -7,6 +7,7 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -95,10 +96,13 @@ class PlayerService : MediaSessionService() {
                     "Referer" to "https://www.youtube.com/",
                 ),
             )
+        // Wrap httpFactory in DefaultDataSource.Factory so that local content:// and file://
+        // audio files work alongside online HTTP/HTTPS YouTube streams.
+        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
         val player = ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(context).setDataSourceFactory(httpFactory),
+                DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory),
             )
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -111,9 +115,12 @@ class PlayerService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .setPauseAtEndOfMediaItems(false)
             .build()
+        // Audio offload is disabled so that android.media.audiofx.Visualizer can attach
+        // to the audio session and inspect FFT frequencies for VBASS (haptic bass).
+        // (Hardware DSP offload bypasses the software audio mixer and breaks Visualizer.)
         val offloadPrefs = TrackSelectionParameters.AudioOffloadPreferences.Builder()
             .setAudioOffloadMode(
-                TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED,
+                TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED,
             )
             .setIsGaplessSupportRequired(true)
             .build()

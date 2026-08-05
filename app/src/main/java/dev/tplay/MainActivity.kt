@@ -78,6 +78,8 @@ private fun MediaPermissionGate(vm: MainViewModel) {
             // Without this the media notification never shows on Android 13+.
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
+        // Required for android.media.audiofx.Visualizer (used by VBASS haptic bass).
+        add(Manifest.permission.RECORD_AUDIO)
     }
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),

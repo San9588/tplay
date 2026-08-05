@@ -57,7 +57,7 @@ fun YouTubeScreen(vm: MainViewModel) {
     val accent = LocalTuiAccent.current
 
     Column(Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
-        AsciiBox(title = " YOUTUBE SEARCH ") {
+        AsciiBox(title = " YOUTUBE ") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TuiText("> ", color = green)
                 BasicTextField(
@@ -83,16 +83,12 @@ fun YouTubeScreen(vm: MainViewModel) {
             }
         }
 
-        // live pipeline status — one strip, active stage blinks
+        // live pipeline status — single chip that transitions fetch -> parse -> ready -> playing
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 3.dp),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StageChip("fetch", vm.ytStage == YtStage.FETCH, accent)
-            StageChip("parse", vm.ytStage == YtStage.PARSE, accent)
-            StageChip("ready", vm.ytStage == YtStage.READY, accent)
-            StageChip("playing", vm.ytStage == YtStage.PLAYING, accent)
+            SingleStageChip(vm.ytStage, accent)
         }
 
         if (resolving != null) {
@@ -138,7 +134,7 @@ fun YouTubeScreen(vm: MainViewModel) {
                 SelectableRow(
                     text = song.title,
                     selected = isCurrent,
-                    onClick = { vm.playYoutube(song) },
+                    onClick = { vm.playYoutubeQueue(index) },
                     meta = formatTime(song.durationMs),
                 )
             }
@@ -147,10 +143,18 @@ fun YouTubeScreen(vm: MainViewModel) {
     }
 }
 
-/** One status chip, e.g. `[fetch_]` — the underscore blinks while the stage is active. */
+/** Single live pipeline status chip, e.g. `[fetch_]` -> `[parse_]` -> `[ready_]` -> `[playing_]` -> `[idle_]`. */
 @Composable
-private fun StageChip(label: String, active: Boolean, accent: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+fun SingleStageChip(stage: YtStage, accent: Color, modifier: Modifier = Modifier) {
+    val active = stage != YtStage.IDLE
+    val label = when (stage) {
+        YtStage.FETCH -> "fetch"
+        YtStage.PARSE -> "parse"
+        YtStage.READY -> "ready"
+        YtStage.PLAYING -> "playing"
+        YtStage.IDLE -> "idle"
+    }
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         TuiText("[", color = if (active) accent else TuiFaint, size = 10)
         TuiText(label, color = if (active) accent else TuiFaint, size = 10)
         if (active) {
