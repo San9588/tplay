@@ -101,6 +101,25 @@ class PlayerConnection(private val context: Context) {
             sync(player)
         }
 
+        // HapticBass has no way to know playback paused on its own - handleBuffer()
+        // just stops being called, so its envelope stays frozen at whatever it was
+        // last and the sustain loop never sees it decay. Without this it can buzz
+        // indefinitely after a pause. onIsPlayingChanged also fires for buffering,
+        // so use the lighter pause()/resume() here and reserve stop() (which tears
+        // down the vibrator handle) for actual end-of-playback below.
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (!hapticBassEnabled) return
+            if (isPlaying) HapticBass.resume() else HapticBass.pause()
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (hapticBassEnabled &&
+                (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE)
+            ) {
+                HapticBass.stop()
+            }
+        }
+
         override fun onPlayerError(error: PlaybackException) {
             Log.e(TAG, "player error: ${error.errorCodeName} ${error.message}", error)
             val c = controller ?: return
@@ -418,7 +437,13 @@ class PlayerConnection(private val context: Context) {
             val sessionId = PlayerService.audioSessionId
             if (sessionId <= 0) return  // no active audio session yet — don't fake "ON"
             hapticBassEnabled = true
-            HapticBass.start(context, sessionId, hapticBassStep)
+            // HapticBass.start(context, step, freqHz) - it doesn't take a session id at
+            // all (it taps the audio buffer directly via TeeAudioProcessor, not via the
+            // session/Visualizer). The old call passed sessionId into the `step`
+            // parameter and hapticBassStep into `freqHz`, so the user's chosen intensity
+            // was silently discarded and replaced by whatever the session id happened to
+            // coerce to - a likely contributor to the "weak" feel.
+            HapticBass.start(context, hapticBassStep)
         }
     }
 
