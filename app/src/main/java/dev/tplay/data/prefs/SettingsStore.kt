@@ -23,7 +23,7 @@ data class Settings(
     val wifiQuality: String = "HIGH",
     val mobileQuality: String = "LOW",
     val vbassFreq: Int = 100,
-    val asciiCols: Int = 88,
+    val asciiCols: Int = 96,
     val searchMode: String = "mix",
     val coverMode: String = "ascii",
 )
@@ -56,7 +56,7 @@ class SettingsStore(private val context: Context) {
             wifiQuality = prefs[Keys.WIFI_QUALITY] ?: "HIGH",
             mobileQuality = prefs[Keys.MOBILE_QUALITY] ?: "LOW",
             vbassFreq = prefs[Keys.VBASS_FREQ] ?: 100,
-            asciiCols = prefs[Keys.ASCII_COLS] ?: 88,
+            asciiCols = prefs[Keys.ASCII_COLS] ?: 96,
             searchMode = prefs[Keys.SEARCH_MODE] ?: "mix",
             coverMode = prefs[Keys.COVER_MODE] ?: "ascii",
         )

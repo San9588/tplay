@@ -27,6 +27,12 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.utils.Parser
 import java.util.concurrent.ConcurrentHashMap
 
+/** A playable song plus the videos YouTube suggests for it (used to build the queue). */
+data class ResolvedVideo(
+    val song: Song,
+    val related: List<Song>,
+)
+
 class YouTubeRepository(
     private val downloader: OkHttpDownloader,
     private val settingsStore: SettingsStore,
@@ -104,13 +110,13 @@ class YouTubeRepository(
     }
 
     /**
-     * Resolves a video to a playable stream. Retries once after a short delay on
-     * transient failures (rate limiting, flaky extraction).
+     * Resolves a video to a playable stream, plus the videos YouTube suggests for it
+     * ("up next"). Retries once after a short delay on transient failures.
      */
     suspend fun resolveVideo(
         urlOrId: String,
         onStage: (YtStage) -> Unit = {},
-    ): Song = withContext(io) {
+    ): ResolvedVideo = withContext(io) {
         var lastError: Exception? = null
         for (attempt in 0 until 2) {
             try {
@@ -125,7 +131,7 @@ class YouTubeRepository(
         throw lastError ?: ExtractionException("resolve failed")
     }
 
-    private suspend fun doResolveVideo(urlOrId: String, onStage: (YtStage) -> Unit): Song {
+    private suspend fun doResolveVideo(urlOrId: String, onStage: (YtStage) -> Unit): ResolvedVideo {
         init()
         onStage(YtStage.FETCH)
         val url = if (urlOrId.startsWith("http")) urlOrId
@@ -140,20 +146,38 @@ class YouTubeRepository(
             Parser.matchGroup1("v=([^&]*)", url).takeIf { it.isNotEmpty() }
         }.getOrNull() ?: url.hashCode().toString()
         onStage(YtStage.READY)
-        return Song(
-            id = "yt:$videoId",
-            title = extractor.name ?: "unknown",
-            artist = extractor.uploaderName ?: "",
-            album = "",
-            durationMs = runCatching { extractor.length * 1000L }.getOrDefault(0L)
-                .coerceAtLeast(0L),
-            uri = streamUrl,
-            artUri = extractor.thumbnails.firstOrNull()?.url,
-            source = SongSource.YOUTUBE,
-            videoId = videoId,
-            channel = extractor.uploaderName ?: "",
+        return ResolvedVideo(
+            song = Song(
+                id = "yt:$videoId",
+                title = extractor.name ?: "unknown",
+                artist = extractor.uploaderName ?: "",
+                album = "",
+                durationMs = runCatching { extractor.length * 1000L }.getOrDefault(0L)
+                    .coerceAtLeast(0L),
+                uri = streamUrl,
+                artUri = extractor.thumbnails.firstOrNull()?.url,
+                source = SongSource.YOUTUBE,
+                videoId = videoId,
+                channel = extractor.uploaderName ?: "",
+            ),
+            related = relatedSongs(extractor),
         )
     }
+
+    /**
+     * YouTube's suggested/"up next" items for an already-fetched page, as metadata-only
+     * songs (resolved lazily). Fails gracefully — suggestions are a bonus, not critical.
+     */
+    private fun StreamExtractor.relatedSongs(limit: Int = 25): List<Song> =
+        runCatching {
+            getRelatedItems()
+                ?.items
+                ?.filterIsInstance<StreamInfoItem>()
+                ?.filter { it.duration > 0 }  // drop livestreams
+                ?.take(limit)
+                ?.mapNotNull { it.toSong() }
+                .orEmpty()
+        }.getOrDefault(emptyList())
 
     /**
      * Resolves a whole queue efficiently: duplicate video ids are resolved only once
@@ -169,7 +193,7 @@ class YouTubeRepository(
         suspend fun resolveOne(song: Song): Song {
             if (song.source != SongSource.YOUTUBE || song.videoId == null) return song
             resolvedByVideoId[song.videoId]?.let { return it }
-            val result = runCatching { doResolveVideo(song.videoId!!) { } }
+            val result = runCatching { doResolveVideo(song.videoId!!) { }.song }
                 .onFailure { Log.e(TAG, "resolve failed for ${song.videoId}: ${it.message}") }
                 .getOrElse { song }
             resolvedByVideoId[song.videoId!!] = result

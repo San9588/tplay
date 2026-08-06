@@ -21,7 +21,10 @@ import dev.tplay.data.model.YtQuality
 import dev.tplay.data.model.YtStage
 import dev.tplay.player.PlayerConnection
 import dev.tplay.player.PlayerUiState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -121,6 +124,8 @@ class MainViewModel(
         private set
 
     private var lastCoverSongId: String? = null
+    private var lastCoverMode = "ascii"
+    private var lastAsciiCols = 96
 
     // lyrics
     var lyrics by mutableStateOf<Lyrics?>(null)
@@ -132,12 +137,25 @@ class MainViewModel(
 
     private var lastLyricsSongId: String? = null
 
-    // ---- recent songs cache (in-memory until the app closes, then one batch write) ----
-
+    // ---- recent songs (what the user actually plays) ----
+    // Held in memory while the app runs (2 MB budget), batch-written to disk on close,
+    // and shown as the base list on the YouTube tab. `pendingRecents` is strictly this
+    // session's plays; `dbRecents` is what was loaded from disk at startup.
     private val pendingRecents = LinkedHashMap<String, RecentSongEntity>()
+    private var dbRecents: List<Song> = emptyList()
+    private var recentList: List<Song> = emptyList()
+    private var showingRecents = false
+    private var lastRecentSongId: String? = null
 
-    private fun recordRecent(song: Song) {
-        if (song.source != SongSource.YOUTUBE) return
+    // Detached from viewModelScope so the final batch write survives onDestroy cancelling it.
+    private val flushScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // In-flight background fill of a tapped song's suggestions; cancelled when the user
+    // starts another queue so old suggestions can't leak into the new one.
+    private var relatedFillJob: Job? = null
+
+    private fun recordRecent(song: Song?) {
+        if (song == null || song.source != SongSource.YOUTUBE) return
         val entry = RecentSongEntity(
             id = song.id,
             title = song.title,
@@ -162,14 +180,29 @@ class MainViewModel(
             it.remove()
             total -= oldest.value.estimatedBytes()
         }
+        rebuildRecentList()
+        if (showingRecents) searchResults = recentList
     }
 
-    /** Called when the app is closing — persists all pending entries in one batch. */
+    /** Live recents view: this session's plays (newest first) over the disk-loaded base. */
+    private fun rebuildRecentList() {
+        val sessionIds = pendingRecents.keys
+        val base = dbRecents.filter { it.id !in sessionIds }
+        recentList = pendingRecents.values.toList().reversed() + base
+    }
+
+    /** Called when the app is closing/backgrounding — persists pending entries in one batch. */
     fun flushRecentSongs() {
         if (pendingRecents.isEmpty()) return
         val batch = pendingRecents.values.toList()
         pendingRecents.clear()
-        viewModelScope.launch { container.recentSongsRepository.batchWrite(batch) }
+        // The batch is now on disk — fold it into the base so a background/resume cycle
+        // doesn't drop these songs from the live recents list.
+        val batchById = batch.associateBy { it.id }
+        dbRecents = batchById.values.toList() + dbRecents.filter { it.id !in batchById }
+        rebuildRecentList()
+        if (showingRecents) searchResults = recentList
+        flushScope.launch { container.recentSongsRepository.batchWrite(batch) }
     }
 
     init {
@@ -182,6 +215,12 @@ class MainViewModel(
                 if (st.currentSong?.id != lastLyricsSongId) {
                     lastLyricsSongId = st.currentSong?.id
                     loadLyrics(st.currentSong)
+                }
+                // Recents = what actually starts playing (tap, next/prev, playlist advance),
+                // not everything that was resolved/enqueued.
+                if (st.currentSong?.id != lastRecentSongId) {
+                    lastRecentSongId = st.currentSong?.id
+                    recordRecent(st.currentSong)
                 }
                 // Surface playback failures (expired/403 streams) in the YouTube tab.
                 val err = st.errorMessage
@@ -201,6 +240,17 @@ class MainViewModel(
                     } else {
                         YtStage.IDLE
                     }
+                }
+            }
+        }
+        // Reload the cover when the cover mode / ascii width setting changes, so the
+        // change takes effect on the current track too.
+        viewModelScope.launch {
+            settings.collect { s ->
+                if (s.coverMode != lastCoverMode || s.asciiCols != lastAsciiCols) {
+                    lastCoverMode = s.coverMode
+                    lastAsciiCols = s.asciiCols
+                    playerState.value.currentSong?.let { loadCover(it) }
                 }
             }
         }
@@ -234,10 +284,12 @@ class MainViewModel(
         viewModelScope.launch {
             searchLoading = true
             youtubeError = null
-            val recents = container.recentSongsRepository.loadRecent(60)
+            dbRecents = container.recentSongsRepository.loadRecent(60)
                 .map { it.toSongJson().toSong() }
-            if (recents.isNotEmpty()) {
-                searchResults = recents
+            rebuildRecentList()
+            if (recentList.isNotEmpty()) {
+                searchResults = recentList
+                showingRecents = true
                 ytStage = YtStage.READY
             } else {
                 val trending = runCatching {
@@ -249,6 +301,7 @@ class MainViewModel(
                     }
                     .getOrDefault(emptyList())
                 searchResults = trending
+                showingRecents = true
                 if (trending.isEmpty()) youtubeError = "trending unavailable — try a search"
             }
             searchLoading = false
@@ -279,6 +332,7 @@ class MainViewModel(
     fun playLibraryFrom(index: Int) {
         val songs = localSongs
         if (songs.isEmpty()) return
+        relatedFillJob?.cancel()
         player?.playQueue(songs.map { it }, index)
     }
 
@@ -301,30 +355,9 @@ class MainViewModel(
                 }
                 .getOrDefault(emptyList())
             searchResults = results
+            showingRecents = false
             if (results.isEmpty()) youtubeError = "search failed or no results"
             searchLoading = false
-        }
-    }
-
-    fun playYoutube(song: Song) {
-        val id = song.videoId ?: return
-        youtubeError = null
-        viewModelScope.launch {
-            resolvingId = id
-            player?.setLoading(true)
-            runCatching {
-                val resolved = container.youtubeRepository.resolveVideo(id, onStage = stageUpdater())
-                recordRecent(resolved)
-                player?.playSong(resolved)
-            }.onFailure { e ->
-                youtubeError = e.message ?: "failed to resolve stream"
-                ytStage = YtStage.IDLE
-                resolvingId = null
-                player?.setLoading(false)
-            }
-        }.invokeOnCompletion {
-            resolvingId = null
-            player?.setLoading(false)
         }
     }
 
@@ -333,18 +366,48 @@ class MainViewModel(
         if (songs.isEmpty()) return
         youtubeError = null
         viewModelScope.launch {
+            relatedFillJob?.cancel()
+            val target = songs[index]
+            val targetId = target.videoId ?: return@launch
+            resolvingId = targetId
             player?.setLoading(true)
-            runCatching {
-                val resolved = container.youtubeRepository.resolveQueue(songs, onStage = stageUpdater())
-                resolved.forEach { recordRecent(it) }
-                player?.playQueue(resolved, index)
+            // Fast start: only the tapped song resolves before playback begins (~2s).
+            val rv = runCatching {
+                container.youtubeRepository.resolveVideo(targetId, onStage = stageUpdater())
             }.onFailure { e ->
-                youtubeError = e.message ?: "failed to resolve queue"
+                youtubeError = e.message ?: "failed to resolve stream"
                 ytStage = YtStage.IDLE
-            }.onSuccess {
-                showPlayer = true
-            }
+                resolvingId = null
+                player?.setLoading(false)
+                return@launch
+            }.getOrThrow()
+            resolvingId = null
             player?.setLoading(false)
+            recordRecent(rv.song)
+            player?.playSong(rv.song)
+            showPlayer = true
+            // Search results are transient — after picking one, the tab goes back to the
+            // (live) recents list with the picked song on top.
+            if (!showingRecents) {
+                showingRecents = true
+                searchResults = recentList
+            }
+            // Background: resolve YouTube's suggested songs for the tapped track and append
+            // them, so the queue (player panel + QUEUE tab) fills without blocking playback.
+            val related = rv.related
+            relatedFillJob = if (related.isNotEmpty()) {
+                viewModelScope.launch {
+                    runCatching {
+                        val resolved = container.youtubeRepository.resolveQueue(related, onStage = stageUpdater())
+                        resolved.forEach { player?.enqueue(it) }
+                    }.onFailure { e ->
+                        Log.e(TAG, "related queue resolve failed", e)
+                        ytStage = YtStage.READY
+                    }
+                }
+            } else {
+                null
+            }
         }
     }
 
@@ -382,6 +445,7 @@ class MainViewModel(
 
     fun playPlaylist(id: Long, index: Int = 0) {
         viewModelScope.launch {
+            relatedFillJob?.cancel()
             val songs = container.database.playlistDao().getSongs(id).map { it.toSong() }
             if (songs.isEmpty()) return@launch
             val start = index.coerceIn(0, songs.lastIndex)
@@ -390,7 +454,6 @@ class MainViewModel(
                 player?.setLoading(true)
                 val resolved = container.youtubeRepository.resolveQueue(songs)
                 player?.setLoading(false)
-                resolved.forEach { recordRecent(it) }
                 player?.playQueue(resolved, start)
             } else {
                 player?.playQueue(songs, start)
@@ -415,20 +478,6 @@ class MainViewModel(
     fun setSpeed(speed: Float) = player?.setSpeed(speed)
     fun jumpTo(index: Int) = player?.jumpTo(index)
     fun removeFromQueue(index: Int) = player?.removeFromQueue(index)
-    fun enqueue(song: Song) {
-        viewModelScope.launch {
-            if (song.source == SongSource.YOUTUBE && song.videoId != null) {
-                player?.setLoading(true)
-                val resolved = runCatching { container.youtubeRepository.resolveVideo(song.videoId!!) }
-                    .getOrElse { song }
-                player?.setLoading(false)
-                recordRecent(resolved)
-                player?.enqueue(resolved)
-            } else {
-                player?.enqueue(song)
-            }
-        }
-    }
 
     fun startSleep(minutes: Int) = player?.startSleepTimer(minutes)
     fun cancelSleep() = player?.cancelSleepTimer()
