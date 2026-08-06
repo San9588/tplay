@@ -9,6 +9,7 @@ import android.util.Log
 import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import java.nio.ByteBuffer
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 
 object HapticBass : TeeAudioProcessor.AudioBufferSink {
     val audioBufferSink: TeeAudioProcessor.AudioBufferSink = this
@@ -16,13 +17,48 @@ object HapticBass : TeeAudioProcessor.AudioBufferSink {
     private var cutoffFreqHz: Int = 100
     private var vibrator: Vibrator? = null
     private var running = false
+
+    @Volatile
+    private var isPaused = false
     private var step = 2
-    private var lastPulseMs = 0L
     private var envelope = 0f
-    private val threshold = 0.18f
     private var movingAvg = 0f
-    private var sustainJob: Job? = null
+
+    // How often the render loop pushes a fresh amplitude to the vibrator, independent
+    // of audio buffer size/arrival timing. This is what makes the feel continuous
+    // instead of "loop-y" - a fixed clock, not audio-driven event triggers.
+    private const val TICK_MS = 30L
+
+    // Gate hysteresis: vibration turns ON once envelope climbs above START, and stays
+    // ON until it decays below STOP. Prevents rapid on/off flicker for bass that
+    // hovers right around the threshold.
+    private const val GATE_START = 0.12f
+    private const val GATE_STOP = 0.05f
+
+    // Envelope value that maps to full amplitude (255). Content quieter than this
+    // scales down proportionally toward FLOOR_AMP; anything above it is clamped to max -
+    // this is the "how hard should the loudest bass hit" knob.
+    private const val ENVELOPE_FOR_MAX_AMP = 0.85f
+
+    // Most phone LRA/ERM motors don't meaningfully move below roughly this amplitude,
+    // so it's the floor for the *quietest felt* bass, not a fixed minimum buzz -
+    // amplitude still scales continuously above it with envelope.
+    private const val FLOOR_AMP = 45
+
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    // Single dispatcher for every vibrator command - only this coroutine ever calls
+    // vibrator.vibrate()/cancel(). CONFLATED means if the render loop produces a new
+    // amplitude before the previous vibrate() IPC call has been dispatched, only the
+    // newest value survives - no backlog, no stale amplitudes queued up.
+    private sealed class VibrationCommand {
+        data class Pulse(val amp: Int, val durationMs: Long) : VibrationCommand()
+        object Stop : VibrationCommand()
+    }
+
+    private val vibrationChannel = Channel<VibrationCommand>(Channel.CONFLATED)
+    private var dispatcherJob: Job? = null
+    private var rendererJob: Job? = null
 
     // Simple biquad low-pass per sample
     private class BiquadLPF(sampleRate: Int, cutoffHz: Float, q: Float = 0.707f) {
@@ -67,6 +103,48 @@ object HapticBass : TeeAudioProcessor.AudioBufferSink {
             context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
         running = true
+        isPaused = false
+        envelope = 0f
+        movingAvg = 0f
+
+        // The only coroutine that ever touches vibrator.vibrate()/cancel() directly.
+        dispatcherJob = scope.launch {
+            for (cmd in vibrationChannel) {
+                when (cmd) {
+                    is VibrationCommand.Pulse ->
+                        vibrator?.vibrate(VibrationEffect.createOneShot(cmd.durationMs, cmd.amp))
+                    is VibrationCommand.Stop -> vibrator?.cancel()
+                }
+            }
+        }
+
+        // The continuous envelope-follower: runs on its own fixed clock the entire
+        // time VBASS is on, reading whatever `envelope` currently is and mapping it
+        // straight to amplitude - like a subwoofer's excursion tracking the signal,
+        // not discrete "event" pulses tied to when a threshold was crossed.
+        rendererJob = scope.launch {
+            var gateOpen = false
+            while (isActive && running) {
+                if (!isPaused) {
+                    gateOpen = when {
+                        envelope > GATE_START -> true
+                        envelope < GATE_STOP -> false
+                        else -> gateOpen
+                    }
+                    if (gateOpen) {
+                        val norm = (envelope / ENVELOPE_FOR_MAX_AMP).coerceIn(0f, 1f)
+                        val amp = (FLOOR_AMP + norm * (255 - FLOOR_AMP)).toInt().coerceIn(FLOOR_AMP, 255)
+                        // Duration overlaps the next tick slightly so there's no gap
+                        // between pulses even if this coroutine gets scheduled a few ms late.
+                        vibrationChannel.trySend(VibrationCommand.Pulse(amp, TICK_MS + 20))
+                        Log.d(TAG, "VBASS render: amp=$amp cutoff=${cutoffFreqHz}Hz level=$envelope")
+                    } else {
+                        vibrationChannel.trySend(VibrationCommand.Stop)
+                    }
+                }
+                delay(TICK_MS)
+            }
+        }
     }
 
     fun setStep(value: Int) {
@@ -75,18 +153,45 @@ object HapticBass : TeeAudioProcessor.AudioBufferSink {
 
     fun stop() {
         running = false
+        isPaused = false
         envelope = 0f
         movingAvg = 0f
-        sustainJob?.cancel()
-        sustainJob = null
+        rendererJob?.cancel()
+        rendererJob = null
+        dispatcherJob?.cancel()
+        dispatcherJob = null
         vibrator?.cancel()
         vibrator = null
     }
 
+    // Lighter than stop(): called on pause/buffering so the vibrator falls silent
+    // immediately without tearing down the vibrator handle, dispatcher, or renderer
+    // loop (resume() just lets the loop pick back up). Resetting envelope here
+    // matters - otherwise it stays frozen at its last value (handleBuffer() stops
+    // being called while paused) and the loop would think bass is still loud the
+    // instant playback resumes.
+    fun pause() {
+        if (!running) return
+        isPaused = true
+        envelope = 0f
+        movingAvg = 0f
+        vibrationChannel.trySend(VibrationCommand.Stop)
+    }
+
+    fun resume() {
+        isPaused = false
+        // envelope rebuilds naturally from the next handleBuffer() call; the render
+        // loop is still ticking in the background and will pick it up within TICK_MS.
+    }
+
     override fun flush(sampleRateHz: Int, channelCount: Int, encoding: Int) {}
 
+    // Purely an envelope updater now - it does NOT trigger vibration itself. It just
+    // keeps `envelope` current; the renderer loop (running on its own fixed clock)
+    // is what actually drives the motor. This is what decouples haptic timing from
+    // audio buffer timing.
     override fun handleBuffer(buffer: ByteBuffer) {
-        if (!running || !buffer.hasRemaining()) return
+        if (!running || isPaused || !buffer.hasRemaining()) return
         val bytes = ByteArray(buffer.remaining())
         buffer.get(bytes)
 
@@ -106,6 +211,10 @@ object HapticBass : TeeAudioProcessor.AudioBufferSink {
         val rawLevel = avg.coerceIn(0f, 1f)
 
         movingAvg = movingAvg * 0.92f + rawLevel * 0.08f
+        // Still detect transients to shape the envelope curve: a sudden hit rises
+        // fast (punchy attack), steady bass decays slowly (smooth sustain) - this is
+        // what lets a kick drum still feel like a "hit" inside the continuous loop,
+        // without needing a separate discrete pulse code path for it.
         val transient = rawLevel > movingAvg * 1.35f && rawLevel > 0.12f
 
         envelope = if (transient) {
@@ -113,45 +222,6 @@ object HapticBass : TeeAudioProcessor.AudioBufferSink {
         } else {
             kotlin.math.max(rawLevel * 0.9f, envelope * 0.85f)
         }
-        if (envelope < 0.05f) envelope = 0f
-
-        driveVibrator(transient)
-    }
-
-    private fun driveVibrator(isTransient: Boolean) {
-        val now = System.currentTimeMillis()
-
-        if (isTransient && envelope > 0.18f && now - lastPulseMs > 250) {
-            lastPulseMs = now
-            val amp = (step * envelope * 0.30f * 255).toInt().coerceIn(1, 255)
-            vibrator?.vibrate(VibrationEffect.createOneShot(40, amp))
-            Log.d(TAG, "VBASS attack pulse: amp=$amp cutoff=${cutoffFreqHz}Hz level=$envelope transient=true")
-            startSustain()
-            return
-        }
-
-        if (envelope > 0.15f) {
-            startSustain()
-        } else {
-            sustainJob?.cancel()
-        }
-    }
-
-    private fun startSustain() {
-        if (sustainJob?.isActive == true) return
-        sustainJob = scope.launch {
-            while (isActive && running && envelope > 0.10f) {
-                val amp = (step * envelope * 0.30f * 255).toInt().coerceIn(1, 255)
-                vibrator?.vibrate(VibrationEffect.createOneShot(60, amp))
-                Log.d(TAG, "VBASS sustain pulse: amp=$amp cutoff=${cutoffFreqHz}Hz level=$envelope")
-                delay(55)
-            }
-        }
-    }
-
-    private fun computeAmplitude(level: Float): Int {
-        if (level <= 0.03f) return 0
-        val scaled = level * step * 0.30f
-        return (scaled * 255).toInt().coerceIn(1, 255)
+        if (envelope < 0.03f) envelope = 0f
     }
 }
