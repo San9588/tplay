@@ -3,6 +3,9 @@ package dev.tplay.player
 import android.content.Context
 import android.util.Log
 import androidx.media3.common.AudioAttributes
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -82,8 +85,19 @@ class PlayerService : MediaSessionService() {
                 5_000,
             )
             .build()
-        val renderersFactory = DefaultRenderersFactory(context)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+        val renderersFactory = object : DefaultRenderersFactory(context) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink {
+                return DefaultAudioSink.Builder(context)
+                    .setAudioProcessors(arrayOf(TeeAudioProcessor(HapticBass.audioBufferSink)))
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .build()
+            }
+        }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
         // YouTube (googlevideo) streams frequently reject requests that don't carry a
         // browser-like User-Agent / Referer, so route media through an HTTP factory that
         // sends them on every request. OkHttpDataSource reuses the same OkHttp client as

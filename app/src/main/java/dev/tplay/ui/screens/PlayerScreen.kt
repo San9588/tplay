@@ -72,6 +72,7 @@ fun PlayerScreen(vm: MainViewModel) {
         AsciiCover(
             cover = cover,
             playing = st.isPlaying && !st.isBuffering,
+            wave = false,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)

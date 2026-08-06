@@ -116,6 +116,62 @@ fun SettingsScreen(vm: MainViewModel) {
 
         Spacer(Modifier.padding(4.dp))
 
+        AsciiBox(title = " VBASS FREQUENCY ") {
+            Row {
+                listOf(80, 90, 100, 120).forEach { hz ->
+                    TuiIconButton(
+                        label = if (settings.vbassFreq == hz) "[${hz}Hz]" else "${hz}Hz",
+                        onClick = { vm.setVbassFreq(hz) },
+                        accent = settings.vbassFreq == hz,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.padding(4.dp))
+
+        AsciiBox(title = " COVER MODE ") {
+            Row {
+                listOf("ascii", "normal").forEach { mode ->
+                    TuiIconButton(
+                        label = if (settings.coverMode == mode) "[$mode]" else mode,
+                        onClick = { vm.setCoverMode(mode) },
+                        accent = settings.coverMode == mode,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.padding(4.dp))
+
+        AsciiBox(title = " SEARCH MODE ") {
+            Row {
+                listOf("mix", "vibe", "singer", "suggest").forEach { mode ->
+                    TuiIconButton(
+                        label = if (settings.searchMode == mode) "[$mode]" else mode,
+                        onClick = { vm.setSearchMode(mode) },
+                        accent = settings.searchMode == mode,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.padding(4.dp))
+
+        AsciiBox(title = " ASCII COLS ") {
+            Row {
+                listOf(88, 96, 120).forEach { c ->
+                    TuiIconButton(
+                        label = if (settings.asciiCols == c) "[$c]" else "$c",
+                        onClick = { vm.setAsciiCols(c) },
+                        accent = settings.asciiCols == c,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.padding(4.dp))
+
         AsciiBox(title = " SLEEP TIMER ") {
             val remaining = playerState.sleepRemainingMs
             Column {

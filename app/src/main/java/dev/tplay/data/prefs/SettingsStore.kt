@@ -19,9 +19,13 @@ data class Settings(
     val playbackSpeed: Float = 1f,
     val bufferMs: Int = 50_000,
     val accent: String = "orange",
-    val systemAccent: Boolean = false,
+    val systemAccent: Boolean = true,
     val wifiQuality: String = "HIGH",
     val mobileQuality: String = "LOW",
+    val vbassFreq: Int = 100,
+    val asciiCols: Int = 88,
+    val searchMode: String = "mix",
+    val coverMode: String = "ascii",
 )
 
 class SettingsStore(private val context: Context) {
@@ -35,6 +39,10 @@ class SettingsStore(private val context: Context) {
         val SYSTEM_ACCENT = booleanPreferencesKey("system_accent")
         val WIFI_QUALITY = androidx.datastore.preferences.core.stringPreferencesKey("wifi_quality")
         val MOBILE_QUALITY = androidx.datastore.preferences.core.stringPreferencesKey("mobile_quality")
+        val VBASS_FREQ = intPreferencesKey("vbass_freq")
+        val ASCII_COLS = intPreferencesKey("ascii_cols")
+        val SEARCH_MODE = androidx.datastore.preferences.core.stringPreferencesKey("search_mode")
+        val COVER_MODE = androidx.datastore.preferences.core.stringPreferencesKey("cover_mode")
     }
 
     val settings: Flow<Settings> = context.dataStore.data.map { prefs ->
@@ -47,6 +55,10 @@ class SettingsStore(private val context: Context) {
             systemAccent = prefs[Keys.SYSTEM_ACCENT] ?: false,
             wifiQuality = prefs[Keys.WIFI_QUALITY] ?: "HIGH",
             mobileQuality = prefs[Keys.MOBILE_QUALITY] ?: "LOW",
+            vbassFreq = prefs[Keys.VBASS_FREQ] ?: 100,
+            asciiCols = prefs[Keys.ASCII_COLS] ?: 88,
+            searchMode = prefs[Keys.SEARCH_MODE] ?: "mix",
+            coverMode = prefs[Keys.COVER_MODE] ?: "ascii",
         )
     }
 
@@ -80,5 +92,21 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setMobileQuality(name: String) = context.dataStore.edit {
         it[Keys.MOBILE_QUALITY] = name
+    }
+
+    suspend fun setVbassFreq(hz: Int) = context.dataStore.edit {
+        it[Keys.VBASS_FREQ] = hz
+    }
+
+    suspend fun setAsciiCols(cols: Int) = context.dataStore.edit {
+        it[Keys.ASCII_COLS] = cols
+    }
+
+    suspend fun setSearchMode(mode: String) = context.dataStore.edit {
+        it[Keys.SEARCH_MODE] = mode
+    }
+
+    suspend fun setCoverMode(mode: String) = context.dataStore.edit {
+        it[Keys.COVER_MODE] = mode
     }
 }

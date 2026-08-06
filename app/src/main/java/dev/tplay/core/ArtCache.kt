@@ -77,11 +77,12 @@ class ArtCache(
     suspend fun toAsciiAsync(
         key: String,
         bitmap: Bitmap,
+        cols: Int = 88,
         dispatcher: CoroutineDispatcher = Dispatchers.Default,
     ): ImageBitmap = withContext(dispatcher) {
-        val asciiKey = "ascii:$key"
+        val asciiKey = "ascii:$key:$cols"
         memCache.get(asciiKey)?.let { return@withContext it.asImageBitmap() }
-        val ascii = bitmap.toAsciiBitmap(appContext)
+        val ascii = bitmap.toAsciiBitmap(appContext, cols)
         memCache.put(asciiKey, ascii)
         ascii.asImageBitmap()
     }

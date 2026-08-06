@@ -435,15 +435,40 @@ class MainViewModel(
 
     // ---- haptic bass ----
 
+    fun setVbassFreq(hz: Int) {
+        viewModelScope.launch {
+            container.settingsStore.setVbassFreq(hz)
+        }
+        dev.tplay.player.HapticBass.setFreq(hz)
+    }
+
+    fun setAsciiCols(cols: Int) {
+        viewModelScope.launch {
+            container.settingsStore.setAsciiCols(cols)
+        }
+    }
+
+    fun setSearchMode(mode: String) {
+        viewModelScope.launch {
+            container.settingsStore.setSearchMode(mode)
+        }
+    }
+
+    fun setCoverMode(mode: String) {
+        viewModelScope.launch {
+            container.settingsStore.setCoverMode(mode)
+        }
+    }
+
     fun toggleHapticBass() {
         if (hapticBassEnabled) {
             hapticBassEnabled = false
             dev.tplay.player.HapticBass.stop()
         } else {
             val pc = player ?: return
-            if (pc.audioSessionId() <= 0) return  // no audio session yet — don't fake "ON"
+            if (pc.audioSessionId() <= 0) return
             hapticBassEnabled = true
-            dev.tplay.player.HapticBass.start(container.appContext, pc.audioSessionId(), hapticBassStep)
+            dev.tplay.player.HapticBass.start(container.appContext, hapticBassStep, settings.value.vbassFreq)
         }
     }
 
@@ -516,9 +541,14 @@ class MainViewModel(
                 container.artCache.loadFromUrl(it, song.id, 512)
             }
         }
+        val mode = settings.value.coverMode
         asciiCover = if (bitmap != null) {
             coverError = false
-            container.artCache.toAsciiAsync(song.id, bitmap)
+            if (mode == "normal") {
+                bitmap.asImageBitmap()
+            } else {
+                container.artCache.toAsciiAsync(song.id, bitmap, settings.value.asciiCols)
+            }
         } else {
             coverError = true
             container.artCache.placeholderAsync(song.id, song.id.hashCode().toLong())
