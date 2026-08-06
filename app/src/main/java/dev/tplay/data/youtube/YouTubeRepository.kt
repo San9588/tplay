@@ -160,7 +160,7 @@ class YouTubeRepository(
                 videoId = videoId,
                 channel = extractor.uploaderName ?: "",
             ),
-            related = relatedSongs(extractor),
+            related = extractor.relatedSongs(),
         )
     }
 

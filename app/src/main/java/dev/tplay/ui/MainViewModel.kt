@@ -188,7 +188,8 @@ class MainViewModel(
     private fun rebuildRecentList() {
         val sessionIds = pendingRecents.keys
         val base = dbRecents.filter { it.id !in sessionIds }
-        recentList = pendingRecents.values.toList().reversed() + base
+        val session = pendingRecents.values.toList().asReversed().map { it.toSongJson().toSong() }
+        recentList = session + base
     }
 
     /** Called when the app is closing/backgrounding — persists pending entries in one batch. */
@@ -199,7 +200,8 @@ class MainViewModel(
         // The batch is now on disk — fold it into the base so a background/resume cycle
         // doesn't drop these songs from the live recents list.
         val batchById = batch.associateBy { it.id }
-        dbRecents = batchById.values.toList() + dbRecents.filter { it.id !in batchById }
+        val sessionSongs = batchById.values.toList().map { it.toSongJson().toSong() }
+        dbRecents = sessionSongs + dbRecents.filter { it.id !in batchById }
         rebuildRecentList()
         if (showingRecents) searchResults = recentList
         flushScope.launch { container.recentSongsRepository.batchWrite(batch) }
